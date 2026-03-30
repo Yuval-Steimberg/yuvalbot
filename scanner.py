@@ -131,7 +131,7 @@ CANDIDATE RESUME:
         "https://api.anthropic.com/v1/messages",
         headers={"x-api-key": key, "anthropic-version":"2023-06-01",
                  "content-type":"application/json"},
-        json={"model":"claude-sonnet-4-20250514","max_tokens":2000,
+        json={"model":"claude-haiku-4-5-20251001","max_tokens":2000,
               "system":SYSTEM_PROMPT,"messages":[{"role":"user","content":prompt}]},
         timeout=60)
     resp.raise_for_status()
@@ -184,8 +184,12 @@ def send_email(job: dict, ai: dict):
     msg["From"] = efrom; msg["To"] = eto
     msg.attach(MIMEText(html,"html"))
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com",465) as s:
-            s.login(efrom,epwd); s.send_message(msg)
+        with smtplib.SMTP("smtp.gmail.com", 587) as s:
+            s.ehlo()
+            s.starttls()
+            s.ehlo()
+            s.login(efrom, epwd)
+            s.send_message(msg)
         log.info(f"📧 Email sent: {job['title']} @ {job['company']}")
     except Exception as e:
         log.error(f"Email failed: {e}")
@@ -209,8 +213,10 @@ def send_whatsapp(job: dict, ai: dict):
             auth=(sid,token),
             data={"From":frm,"To":f"whatsapp:{to}","Body":body},
             timeout=15)
-        resp.raise_for_status()
-        log.info(f"💬 WhatsApp sent: {job['title']}")
+        if resp.status_code != 201:
+            log.error(f"WhatsApp failed {resp.status_code}: {resp.text}")
+        else:
+            log.info(f"💬 WhatsApp sent: {job['title']}")
     except Exception as e:
         log.error(f"WhatsApp failed: {e}")
 
