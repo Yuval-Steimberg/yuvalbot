@@ -149,6 +149,7 @@ pre.cv{background:#060608;border:1px solid var(--b);border-radius:6px;padding:14
   <div class="nav-r">
     <span class="live"><span class="dot"></span>LIVE</span>
     <button class="btn btn-g" id="scanBtn" onclick="doScan()">⟳ Scan Now</button>
+    <button class="btn btn-r btn-sm" onclick="clearDB()" style="border-color:#ff8c42;color:#ff8c42">🗑 Clear DB</button>
     <a href="/logout"><button class="btn btn-r btn-sm">Logout</button></a>
   </div>
 </nav>
@@ -305,6 +306,12 @@ async function doScan(){
 function cp(id){navigator.clipboard.writeText(document.getElementById(id).textContent);toast('Copied!');}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),4000);}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMo();});
+async function clearDB(){
+  if(!confirm('Clear all jobs and rescan from scratch?'))return;
+  await fetch('/api/clear',{method:'POST'});
+  toast('🗑 Database cleared — click Scan Now to rescan');
+  jobs=[];stats();render();
+}
 setInterval(load,30000);
 load();
 </script></body></html>"""
@@ -354,6 +361,19 @@ def api_scan():
 @app.route("/health")
 def health():
     return "OK", 200
+
+
+@app.route("/api/clear", methods=["POST"])
+@login_required
+def api_clear():
+    import sqlite3
+    from scanner import DB
+    con = sqlite3.connect(DB)
+    con.execute("DELETE FROM jobs")
+    con.commit()
+    con.close()
+    log.info("🗑 Database cleared by user")
+    return jsonify({"ok": True})
 
 # ─── Scheduler ────────────────────────────────────────────────────────────────
 
