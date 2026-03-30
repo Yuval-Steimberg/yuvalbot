@@ -197,9 +197,12 @@ def send_email(job: dict, ai: dict):
 def send_whatsapp(job: dict, ai: dict):
     sid   = os.environ.get("TWILIO_SID","")
     token = os.environ.get("TWILIO_TOKEN","")
-    frm   = os.environ.get("TWILIO_FROM","whatsapp:+14155238886")
     to    = os.environ.get("YOUR_PHONE","")
     if not all([sid,token,to]): return
+    # Always use the sandbox number directly — no env var needed
+    frm = "whatsapp:+14155238886"
+    # Strip any existing whatsapp: prefix from TO number
+    to_clean = to.replace("whatsapp:","").strip()
     body = (f"🤖 *YUVAL.BOT*\n\n"
             f"📌 *{job['title']}*\n"
             f"🏢 {job['company']} · {job['location']}\n"
@@ -211,12 +214,12 @@ def send_whatsapp(job: dict, ai: dict):
         resp = requests.post(
             f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
             auth=(sid,token),
-            data={"From":frm,"To":f"whatsapp:{to}","Body":body},
+            data={"From":frm,"To":f"whatsapp:{to_clean}","Body":body},
             timeout=15)
-        if resp.status_code != 201:
-            log.error(f"WhatsApp failed {resp.status_code}: {resp.text}")
-        else:
+        if resp.status_code == 201:
             log.info(f"💬 WhatsApp sent: {job['title']}")
+        else:
+            log.error(f"WhatsApp failed {resp.status_code}: {resp.text}")
     except Exception as e:
         log.error(f"WhatsApp failed: {e}")
 
