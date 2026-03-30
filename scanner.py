@@ -227,7 +227,7 @@ QUERIES = [
     "FPGA design engineer junior",
 ]
 
-SITES = ["indeed","linkedin","google"]   # glassdoor + zip_recruiter blocked for Israel
+SITES = ["indeed", "linkedin"]  # google rate-limits heavily; indeed+linkedin sufficient
 
 def run_scan():
     log.info("="*50)
@@ -244,7 +244,7 @@ def run_scan():
                 search_term=query,
                 location="Israel",
                 country_indeed="Israel",
-                results_wanted=15,
+                results_wanted=10,
                 hours_old=72,
                 description_format="markdown",
             )
@@ -311,7 +311,7 @@ def run_scan():
                 send_whatsapp(job, ai)
                 time.sleep(2)
 
-        time.sleep(4)  # polite delay between queries
+        time.sleep(8)  # polite delay between queries
 
     log.info(f"✅ Done. New={new} Notified={notified}")
     return new, notified
