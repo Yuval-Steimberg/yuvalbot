@@ -7,8 +7,6 @@ Scores each job, tailors resume, writes LinkedIn message + cover letter.
 import os, re, json, time, sqlite3, logging, smtplib
 from datetime import datetime
 from pathlib import Path
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 import requests
 from jobspy import scrape_jobs
@@ -147,16 +145,18 @@ CANDIDATE RESUME:
 # ─── Notifications ────────────────────────────────────────────────────────────
 
 def send_email(job: dict, ai: dict):
-    efrom = os.environ.get("EMAIL_FROM","")
-    epwd  = os.environ.get("EMAIL_PASSWORD","")
-    eto   = os.environ.get("EMAIL_TO","")
-    if not all([efrom,epwd,eto]): return
-    sc = ai["fit_score"]
+    eto       = os.environ.get("EMAIL_TO","")
+    resend_key= os.environ.get("RESEND_API_KEY","")
+    efrom     = os.environ.get("EMAIL_FROM","")
+    epwd      = os.environ.get("EMAIL_PASSWORD","")
+    if not eto: return
+
+    sc  = ai["fit_score"]
     col = "#00aa55" if sc>=88 else "#e6a817" if sc>=72 else "#cc4444"
     html = f"""<div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto">
   <div style="background:#0f0f1e;padding:24px;border-radius:8px 8px 0 0">
     <h1 style="color:#00ff88;margin:0;font-size:20px">⚡ YUVAL.BOT — New Match</h1>
-    <p style="color:#666;margin:4px 0 0;font-size:11px">{datetime.now().strftime('%b %d %Y %H:%M')} · {job['source'].upper()}</p>
+    <p style="color:#666;margin:4px 0 0;font-size:11px">{job['source'].upper()} · Auto-scanned</p>
   </div>
   <div style="background:#fff;padding:24px;border-left:5px solid #00aa55">
     <h2 style="color:#111;margin:0 0 4px">{job['title']}</h2>
@@ -175,24 +175,47 @@ def send_email(job: dict, ai: dict):
       <a href="{job['url']}" style="background:#00aa55;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:bold">→ APPLY NOW</a>
     </div>
   </div>
-  <div style="background:#eee;padding:10px 24px;border-radius:0 0 8px 8px;font-size:10px;color:#999">
-    YUVAL.BOT · Auto-scan · Open dashboard to manage all jobs
-  </div>
 </div>"""
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"🚀 {sc}% — {job['title']} @ {job['company']} [{job['source'].upper()}]"
-    msg["From"] = efrom; msg["To"] = eto
-    msg.attach(MIMEText(html,"html"))
-    try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as s:
-            s.ehlo()
-            s.starttls()
-            s.ehlo()
-            s.login(efrom, epwd)
-            s.send_message(msg)
-        log.info(f"📧 Email sent: {job['title']} @ {job['company']}")
-    except Exception as e:
-        log.error(f"Email failed: {e}")
+
+    subject = f"🚀 {sc}% — {job['title']} @ {job['company']} [{job['source'].upper()}]"
+
+    # Try Resend API first (works on Railway — no port issues)
+    if resend_key:
+        try:
+            resp = requests.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {resend_key}",
+                         "Content-Type": "application/json"},
+                json={"from": "YUVAL.BOT <onboarding@resend.dev>",
+                      "to": [eto], "subject": subject, "html": html},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                log.info(f"📧 Email sent (Resend): {job['title']} @ {job['company']}")
+                return
+            else:
+                log.error(f"Resend failed {resp.status_code}: {resp.text}")
+        except Exception as e:
+            log.error(f"Resend error: {e}")
+
+    # Fallback: SMTP port 587
+    if efrom and epwd:
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = efrom
+        msg["To"] = eto
+        msg.attach(MIMEText(html, "html"))
+        try:
+            with smtplib.SMTP("smtp.gmail.com", 587) as s:
+                s.ehlo(); s.starttls(); s.ehlo()
+                s.login(efrom, epwd)
+                s.send_message(msg)
+            log.info(f"📧 Email sent (SMTP): {job['title']} @ {job['company']}")
+        except Exception as e:
+            log.error(f"Email failed: {e}")
+
 
 def send_whatsapp(job: dict, ai: dict):
     sid   = os.environ.get("TWILIO_SID","")
