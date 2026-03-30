@@ -227,7 +227,7 @@ QUERIES = [
     "FPGA design engineer junior",
 ]
 
-SITES = ["indeed","linkedin","glassdoor","google","zip_recruiter"]
+SITES = ["indeed","linkedin","google"]   # glassdoor + zip_recruiter blocked for Israel
 
 def run_scan():
     log.info("="*50)
