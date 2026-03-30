@@ -145,76 +145,67 @@ CANDIDATE RESUME:
 # ─── Notifications ────────────────────────────────────────────────────────────
 
 def send_email(job: dict, ai: dict):
-    eto       = os.environ.get("EMAIL_TO","")
-    resend_key= os.environ.get("RESEND_API_KEY","")
-    efrom     = os.environ.get("EMAIL_FROM","")
-    epwd      = os.environ.get("EMAIL_PASSWORD","")
-    if not eto: return
+    """Send email via Resend API — no SMTP, works on Railway."""
+    eto        = os.environ.get("EMAIL_TO", "")
+    resend_key = os.environ.get("RESEND_API_KEY", "")
 
-    sc  = ai["fit_score"]
-    col = "#00aa55" if sc>=88 else "#e6a817" if sc>=72 else "#cc4444"
+    log.info(f"📧 Email debug: RESEND_KEY={'SET('+resend_key[:8]+')' if resend_key else 'MISSING'}, TO={eto}")
+
+    if not eto:
+        log.error("📧 EMAIL_TO not set — skipping")
+        return
+    if not resend_key:
+        log.error("📧 RESEND_API_KEY not set — skipping email")
+        return
+
+    sc  = ai.get("fit_score", 0)
+    col = "#00aa55" if sc >= 88 else "#e6a817" if sc >= 72 else "#cc4444"
+
     html = f"""<div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto">
   <div style="background:#0f0f1e;padding:24px;border-radius:8px 8px 0 0">
     <h1 style="color:#00ff88;margin:0;font-size:20px">⚡ YUVAL.BOT — New Match</h1>
-    <p style="color:#666;margin:4px 0 0;font-size:11px">{job['source'].upper()} · Auto-scanned</p>
+    <p style="color:#666;margin:4px 0 0;font-size:11px">{job.get('source','').upper()}</p>
   </div>
   <div style="background:#fff;padding:24px;border-left:5px solid #00aa55">
-    <h2 style="color:#111;margin:0 0 4px">{job['title']}</h2>
-    <p style="color:#666;font-size:13px;margin:0 0 16px">{job['company']} · {job['location']}</p>
+    <h2 style="color:#111;margin:0 0 4px">{job.get('title','')}</h2>
+    <p style="color:#666;font-size:13px;margin:0 0 16px">{job.get('company','')} · {job.get('location','')}</p>
     <div style="background:#f0fff4;display:inline-block;padding:12px 20px;border-radius:8px;margin-bottom:20px">
       <span style="font-size:30px;font-weight:bold;color:{col}">{sc}%</span>
       <span style="color:#666;font-size:12px;margin-left:6px">match</span>
     </div>
-    <h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#333">✅ Tailored Resume</h3>
+    <h3 style="font-size:12px;text-transform:uppercase;color:#333">✅ Tailored Resume</h3>
     <pre style="background:#f5f5f5;padding:14px;border-radius:6px;font-size:11px;line-height:1.7;white-space:pre-wrap">{ai.get('tailored_resume','')}</pre>
-    <h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#333;margin-top:20px">💼 LinkedIn Message</h3>
+    <h3 style="font-size:12px;text-transform:uppercase;color:#333;margin-top:20px">💼 LinkedIn Message</h3>
     <div style="background:#e8f4fd;padding:14px;border-radius:6px;font-size:13px;font-style:italic">{ai.get('linkedin_message','')}</div>
-    <h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#333;margin-top:20px">✉ Cover Letter</h3>
+    <h3 style="font-size:12px;text-transform:uppercase;color:#333;margin-top:20px">✉ Cover Letter</h3>
     <pre style="background:#f5f5f5;padding:14px;border-radius:6px;font-size:12px;line-height:1.8;white-space:pre-wrap">{ai.get('cover_letter','')}</pre>
     <div style="text-align:center;margin-top:24px">
-      <a href="{job['url']}" style="background:#00aa55;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:bold">→ APPLY NOW</a>
+      <a href="{job.get('url','')}" style="background:#00aa55;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:bold">→ APPLY NOW</a>
     </div>
   </div>
 </div>"""
 
-    subject = f"🚀 {sc}% — {job['title']} @ {job['company']} [{job['source'].upper()}]"
-
-    # Try Resend API first (works on Railway — no port issues)
-    if resend_key:
-        try:
-            resp = requests.post(
-                "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {resend_key}",
-                         "Content-Type": "application/json"},
-                json={"from": "YUVAL.BOT <onboarding@resend.dev>",
-                      "to": [eto], "subject": subject, "html": html},
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                log.info(f"📧 Email sent (Resend): {job['title']} @ {job['company']}")
-                return
-            else:
-                log.error(f"Resend failed {resp.status_code}: {resp.text}")
-        except Exception as e:
-            log.error(f"Resend error: {e}")
-
-    # Fallback: SMTP port 587
-    if efrom and epwd:
-        from email.mime.text import MIMEText
-        from email.mime.multipart import MIMEMultipart
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = efrom
-        msg["To"] = eto
-        msg.attach(MIMEText(html, "html"))
-        try:
-            with smtplib.SMTP("smtp.gmail.com", 587) as s:
-                s.ehlo(); s.starttls(); s.ehlo()
-                s.login(efrom, epwd)
-                s.send_message(msg)
-            log.info(f"📧 Email sent (SMTP): {job['title']} @ {job['company']}")
-        except Exception as e:
-            log.error(f"Email failed: {e}")
+    try:
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {resend_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "from": "YUVAL.BOT <onboarding@resend.dev>",
+                "to": [eto],
+                "subject": f"🚀 {sc}% match — {job.get('title','')} @ {job.get('company','')}",
+                "html": html,
+            },
+            timeout=20,
+        )
+        if resp.status_code == 200:
+            log.info(f"📧 Email sent: {job.get('title','')} @ {job.get('company','')}")
+        else:
+            log.error(f"📧 Resend error {resp.status_code}: {resp.text}")
+    except Exception as e:
+        log.error(f"📧 Email exception: {e}")
 
 
 def send_whatsapp(job: dict, ai: dict):
