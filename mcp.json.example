@@ -1,0 +1,48 @@
+{
+  "_readme": [
+    "Copy to mcp.json (or paste the whole object into the MCP_SERVERS variable on Railway).",
+    "Package names and hosted URLs change — take them from each vendor's own MCP docs, not from memory.",
+    "'trust': 'read_only' runs every tool from that server without asking. Set it only for servers that cannot change anything.",
+    "Everything else is gated: reads (search/list/get/read/fetch/query...) run free, writes wait for your yes.",
+    "stdio servers need their runtime in the image: node is installed, so npx works."
+  ],
+
+  "mcpServers": {
+    "notion": {
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "env": { "NOTION_TOKEN": "ntn_..." }
+    },
+
+    "linear": {
+      "url": "https://mcp.linear.app/mcp",
+      "headers": { "Authorization": "Bearer YOUR_LINEAR_TOKEN" }
+    },
+
+    "todoist": {
+      "command": "npx",
+      "args": ["-y", "@abhiz123/todoist-mcp-server"],
+      "env": { "TODOIST_API_TOKEN": "..." }
+    },
+
+    "slack": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-slack"],
+      "env": { "SLACK_BOT_TOKEN": "xoxb-...", "SLACK_TEAM_ID": "T..." }
+    },
+
+    "airbnb": {
+      "_note": "Community server, read-only search. It scrapes; expect it to break and to be blocked from datacenter IPs. Booking still happens in a browser, behind the approval gate.",
+      "command": "npx",
+      "args": ["-y", "@openbnb/mcp-server-airbnb"],
+      "trust": "read_only"
+    },
+
+    "banking": {
+      "_note": "Point this at a READ-ONLY account-data server (balances and transactions). Never at one that can move money: a stolen or malicious server config would be spending your money, not reading about it. Leave trust gated regardless.",
+      "url": "https://your-read-only-banking-mcp/mcp",
+      "headers": { "Authorization": "Bearer ..." },
+      "disabled": true
+    }
+  }
+}

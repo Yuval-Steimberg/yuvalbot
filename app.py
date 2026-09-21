@@ -12,7 +12,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 import agent
 from agent import (brain, consolidate, memory, tasks, approvals, config, vault,
-                   telegram)
+                   telegram, mcp)
 from agent.channels import verify_twilio
 
 logging.basicConfig(level=logging.INFO,
@@ -158,6 +158,12 @@ async function decide(id,ok){await fetch('/api/approvals/'+id,{method:'POST',
 async function loadCap(){const j=await(await fetch('/api/status')).json();
  document.getElementById('p-cap').innerHTML='<div class=card><h4>integrations</h4>'+
   Object.entries(j.capabilities).map(([k,v])=>'<div>'+(v?'🟢':'⚪')+' '+k+'</div>').join('')+
+  '</div><div class=card><h4>connected apps (MCP)</h4>'+
+  (Object.keys(j.mcp||{}).length?Object.entries(j.mcp).map(([k,v])=>
+   '<div>'+(v.error?'🔴':'🟢')+' '+k+' — '+v.tools+' tools · '+v.trust+
+   (v.error?' · '+v.error:'')+'</div>').join(''):'<div class=meta>none configured</div>')+
+  '<div class=row><button onclick="fetch(\'/api/mcp/reload\',{method:\'POST\'}).then(loadCap)">'+
+  'Reload</button></div>'+
   '</div><div class=card><h4>follow-ups</h4>'+(j.followups.length?j.followups.map(t=>
   '<div class=meta>#'+t.id+' '+t.due+' — '+t.what+'</div>').join(''):'<div class=meta>none</div>')+
   '</div><div class=card><h4>secrets stored</h4><div class=meta>'+
@@ -221,6 +227,7 @@ def api_decide(aid):
 @login_required
 def api_status():
     return jsonify({"capabilities": config.capabilities(),
+                    "mcp": mcp.status(),
                     "memory": memory.stats(),
                     "followups": tasks.pending(),
                     "secrets": vault.names() if os.environ.get("VAULT_KEY") else []})
@@ -236,6 +243,18 @@ def api_secrets():
         return jsonify(vault.put(d["name"], d["value"]))
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/mcp")
+@login_required
+def api_mcp():
+    return jsonify(mcp.status())
+
+
+@app.route("/api/mcp/reload", methods=["POST"])
+@login_required
+def api_mcp_reload():
+    return jsonify(mcp.reload())
 
 
 @app.route("/api/consolidate", methods=["POST"])

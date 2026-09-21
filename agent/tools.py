@@ -8,7 +8,8 @@ import os, json, logging, subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import memory, tasks, channels, llm, web, browser, google, vault, approvals, config
+from . import (memory, tasks, channels, llm, web, browser, google, vault,
+               approvals, config, mcp)
 
 log = logging.getLogger("yuvalbot.tools")
 
@@ -145,6 +146,10 @@ SCHEMAS = [
                                   '{"click":"button[type=submit]"},{"wait":2000}]'},
          "intent": {"type": "string", "description": "one line: what this accomplishes"}},
          "required": ["url", "steps"]}},
+    {"name": "mcp_status",
+     "description": "Which connected apps (MCP servers) are live and how many "
+                    "tools each exposes. Use when an mcp__ tool errors.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "vault_list",
      "description": "Names of stored credentials you may reference as {{secret:NAME}}.",
      "input_schema": {"type": "object", "properties": {}}},
@@ -178,6 +183,15 @@ if os.environ.get("ENABLE_SHELL") == "1":
              "command": {"type": "string"}}, "required": ["command"]}})
 
 
+def all_schemas() -> list[dict]:
+    """Native tools plus whatever the configured MCP servers expose right now."""
+    try:
+        return SCHEMAS + mcp.schemas()
+    except Exception as e:
+        log.error(f"mcp schema load failed: {e}")
+        return SCHEMAS
+
+
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
 def _expand(query: str) -> list[str]:
@@ -193,6 +207,9 @@ def _expand(query: str) -> list[str]:
 
 
 def _summarize(name: str, args: dict) -> str:
+    if mcp.is_mcp(name):
+        server, tool = mcp.split(name)
+        return f"[{server}] {tool} — {json.dumps(args)[:400]}"
     if name in ("gmail_send",):
         return f"Email {args.get('to')} — “{args.get('subject')}”\n\n{args.get('body','')[:500]}"
     if name == "gmail_reply":
@@ -211,6 +228,11 @@ def _summarize(name: str, args: dict) -> str:
 
 
 def _needs_approval(name: str, args: dict) -> bool:
+    if mcp.is_mcp(name):
+        # An MCP write is gated even under AUTO_APPROVE: these are third-party
+        # servers whose tool text the model reads, and money moves through some
+        # of them.
+        return mcp.needs_approval(name)
     if config.AUTO_APPROVE:
         return False
     if name == "calendar_create_event":
@@ -222,6 +244,9 @@ def _needs_approval(name: str, args: dict) -> bool:
 
 def execute(name: str, args: dict) -> dict:
     """Raw tool call, no approval gate. Used by dispatch and by granted approvals."""
+    if mcp.is_mcp(name):
+        return mcp.call(name, args)
+
     if name == "memory_search":
         q = args["query"]
         limit = args.get("limit", 8)
@@ -295,6 +320,8 @@ def execute(name: str, args: dict) -> dict:
         return browser.read(args["url"])
     if name == "browser_act":
         return browser.act(args["url"], args.get("steps") or [])
+    if name == "mcp_status":
+        return mcp.status()
     if name == "vault_list":
         return {"secrets": vault.names() if os.environ.get("VAULT_KEY") else [],
                 "note": "reference as {{secret:NAME}} in browser_act fill values"}

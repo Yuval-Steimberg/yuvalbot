@@ -103,7 +103,26 @@ into Railway variables and redeploy.
   Every memory commit is pushed there, so the volume is no longer a single point
   of failure.
 
-## 9. Smoke test in production
+## 9. Connect your other apps (MCP)
+
+Get each vendor's MCP config from their docs, merge them into one object, and put
+it in a single Railway variable:
+
+```
+MCP_SERVERS={"mcpServers":{"notion":{"command":"npx","args":["-y","@notionhq/notion-mcp-server"],"env":{"NOTION_TOKEN":"ntn_..."}},"linear":{"url":"https://mcp.linear.app/mcp","headers":{"Authorization":"Bearer ..."}}}}
+```
+
+It must be valid JSON on one line. `mcp.json.example` in the repo has the shapes
+for Notion, Linear, Todoist, Slack, a read-only Airbnb search server and a
+banking placeholder. After redeploying, open the **status** tab: each server
+shows green with a tool count, or red with the reason.
+
+Banking: point it at a read-only account-data server only. A server that can move
+money is a server that can move money when something goes wrong — and MCP tool
+descriptions are third-party text the model reads. Writes stay gated no matter
+what the server says about itself.
+
+## 10. Smoke test in production
 
 Message the bot, in this order:
 
@@ -135,3 +154,5 @@ Message the bot, in this order:
 | every reminder arrives twice | more than one gunicorn worker or replica |
 | gmail tools error | refresh token was minted without the API enabled; redo step 7 |
 | browser tools unavailable | image built with `INSTALL_BROWSER=0` |
+| MCP server red in status | bad package name, missing token, or it needs a runtime that is not in the image |
+| `MCP_SERVERS` ignored | not valid JSON — the boot log says so |

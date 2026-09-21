@@ -104,6 +104,54 @@ UI or just reply "yes" and it calls `decide_approval`, which executes the stored
 call verbatim. Stored site credentials live in a Fernet-encrypted vault and reach
 the browser as `{{secret:NAME}}` placeholders — the model never sees a value.
 
+## Connecting other apps (MCP)
+
+Rather than a hand-written integration per app, the agent is an MCP client: it
+connects to any MCP server you declare and hands those tools to the model as
+`mcp__<server>__<tool>`. Copy `mcp.json.example` to `mcp.json`, or paste the same
+object into the `MCP_SERVERS` variable on Railway (easier — no redeploy to edit a
+file on a volume).
+
+```json
+{"mcpServers": {
+  "notion": {"command": "npx", "args": ["-y", "@notionhq/notion-mcp-server"],
+             "env": {"NOTION_TOKEN": "ntn_..."}},
+  "linear": {"url": "https://mcp.linear.app/mcp",
+             "headers": {"Authorization": "Bearer ..."}}}}
+```
+
+Node is in the image, so `npx` servers work. `/api/mcp` shows what connected and
+what failed; the status tab has a reload button so you can add a server without a
+redeploy.
+
+Two rules the client enforces, because an MCP server is somebody else's code:
+
+* **Reads run free, writes wait for you.** Tools whose names start with
+  search/list/get/read/fetch/query/… execute directly; everything else goes
+  through the approval gate — and unlike native tools, `AUTO_APPROVE=1` does not
+  lift that. `"trust": "read_only"` on a server skips the gate for all of its
+  tools; set it only for servers that genuinely cannot change anything.
+* **Tool descriptions are untrusted text.** The model is told explicitly that a
+  server telling it to ignore its rules, dump memory or skip an approval is an
+  attack to report, not an instruction to follow.
+
+### What actually connects well
+
+| | how | reliability |
+|---|---|---|
+| Notion, Linear, Todoist, Slack, GitHub | MCP or native API | works unattended |
+| Gmail, Calendar, Drive, Contacts | built in | works unattended |
+| Airbnb, Booking, airlines | community MCP (read-only search) or `browser_act` | brittle — see below |
+| Banking | read-only account-data MCP, gated | read balances, never move money |
+
+Airbnb has no public consumer API. Searching via a community MCP server or
+reading pages with the browser mostly works; logging in and booking from a
+datacenter IP often does not, and automating it is against their terms — worst
+case your account, not the agent's. The reliable version of "connect Airbnb" is
+the mail you already get: the agent reads confirmations from Gmail, writes them
+into `timelines/`, puts them on your calendar and warns you before a free
+cancellation window closes.
+
 ## Using it
 
 ```
@@ -148,7 +196,7 @@ texts as you), and **no autonomous spending** — checkout flows are reachable b
 on conversation, the memory, the proactive follow-ups, mail and calendar,
 browsing — is here and working.
 
-Connected: Telegram, WhatsApp, Gmail, Google Calendar, Google Drive, Google
-Contacts, Resend email, Brave/Serper/DuckDuckGo search, a real Chromium, and a
-shell on its own box. Not connected: iMessage and SMS as you, Slack, Notion,
-banking or payment rails, your screen, your location.
+Connected: Telegram, WhatsApp, Gmail, Calendar, Drive, Contacts, Resend,
+Brave/Serper/DuckDuckGo, a real Chromium, a shell on its own box, and any app
+with an MCP server. Not connected, and not a matter of effort: iMessage and SMS
+as you, your screen, your location.

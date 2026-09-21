@@ -8,8 +8,9 @@ ENV PYTHONUNBUFFERED=1 \
     PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers \
     DATA_DIR=/data
 
+# node is here for MCP servers distributed as npm packages (npx ...)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ca-certificates curl && rm -rf /var/lib/apt/lists/*
+        git ca-certificates curl nodejs npm && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .
