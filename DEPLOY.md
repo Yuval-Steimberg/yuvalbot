@@ -78,7 +78,8 @@ On your own laptop, not on Railway:
    **Google Drive API**, **People API**
 3. **OAuth consent screen**: External, add your own Gmail as a test user
 4. **Credentials → Create credentials → OAuth client ID → Desktop app** → copy
-   the client id and secret
+   the client id and secret (a Desktop client allows the `http://localhost`
+   redirect the script uses; Google no longer permits the old paste-the-code flow)
 5. Then:
 
 ```bash
@@ -87,7 +88,9 @@ cd yuvalbot && pip install requests
 GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... python scripts/google_setup.py
 ```
 
-It prints a URL, you paste back the code, it prints `GOOGLE_REFRESH_TOKEN=...`.
+It opens your browser, you approve, and it prints `GOOGLE_REFRESH_TOKEN=...`.
+If Google says the app is unverified, that is expected for your own test-user
+client: **Advanced → Go to (unsafe)**.
 Put all three (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`)
 into Railway variables and redeploy.
 
@@ -153,6 +156,7 @@ Message the bot, in this order:
 | "Not linked yet" every time | `TELEGRAM_CHAT_ID` not set |
 | every reminder arrives twice | more than one gunicorn worker or replica |
 | gmail tools error | refresh token was minted without the API enabled; redo step 7 |
+| `no refresh_token returned` | you already approved this client once — revoke it at myaccount.google.com/permissions and rerun |
 | browser tools unavailable | image built with `INSTALL_BROWSER=0` |
 | MCP server red in status | bad package name, missing token, or it needs a runtime that is not in the image |
 | `MCP_SERVERS` ignored | not valid JSON — the boot log says so |
