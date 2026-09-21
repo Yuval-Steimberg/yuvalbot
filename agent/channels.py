@@ -46,11 +46,21 @@ def send_email(subject: str, body: str, to: str | None = None) -> dict:
         return {"ok": False, "error": str(e)}
 
 
-def send(channel: str, body: str, subject: str = "yuval.bot") -> dict:
+def send(channel: str, body: str, subject: str = "your agent") -> dict:
     if channel == "email":
         return send_email(subject, body)
     if channel == "whatsapp":
         return send_whatsapp(body)
+    if channel == "telegram":
+        from . import telegram
+        return telegram.send(body)
+    if channel == "auto":
+        from . import telegram
+        if telegram.configured():
+            return telegram.send(body)
+        if os.environ.get("TWILIO_SID"):
+            return send_whatsapp(body)
+        return send_email(subject, body)
     return {"ok": True, "note": f"channel '{channel}' is local-only; nothing sent"}
 
 

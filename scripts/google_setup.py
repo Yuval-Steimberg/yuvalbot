@@ -1,7 +1,8 @@
 """One-time: turn a Google OAuth client into a refresh token.
 
 1. console.cloud.google.com → create project → enable Gmail API + Calendar API
-2. OAuth consent screen (External, add yourself as a test user)
+2. Enable Drive API + People API too, then OAuth consent screen
+   (External, add yourself as a test user)
 3. Credentials → OAuth client ID → Desktop app → copy id + secret
 4. GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... python scripts/google_setup.py
 5. Put the printed GOOGLE_REFRESH_TOKEN in the agent's environment.
@@ -10,7 +11,9 @@
 import os, sys, urllib.parse, requests
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify",
-          "https://www.googleapis.com/auth/calendar"]
+          "https://www.googleapis.com/auth/calendar",
+          "https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/contacts.readonly"]
 REDIRECT = "urn:ietf:wg:oauth:2.0:oob"
 
 cid, secret = os.environ.get("GOOGLE_CLIENT_ID"), os.environ.get("GOOGLE_CLIENT_SECRET")

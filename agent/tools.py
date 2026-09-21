@@ -51,8 +51,8 @@ SCHEMAS = [
      "input_schema": {"type": "object", "properties": {
          "when": {"type": "string", "description": "ISO8601 UTC or 'in 2h' / 'in 3d'"},
          "what": {"type": "string"},
-         "channel": {"type": "string", "enum": ["whatsapp", "email", "silent"],
-                     "default": "whatsapp"},
+         "channel": {"type": "string", "enum": ["auto", "telegram", "whatsapp",
+                                                "email", "silent"], "default": "auto"},
          "repeat_hours": {"type": "integer", "default": 0}}, "required": ["when", "what"]}},
     {"name": "list_followups", "description": "List scheduled follow-ups.",
      "input_schema": {"type": "object", "properties": {}}},
@@ -65,9 +65,10 @@ SCHEMAS = [
      "description": "Message the OWNER out of band (their own WhatsApp or email). Use "
                     "when acting on a scheduled follow-up; in a live chat just reply.",
      "input_schema": {"type": "object", "properties": {
-         "channel": {"type": "string", "enum": ["whatsapp", "email"]},
+         "channel": {"type": "string", "enum": ["auto", "telegram", "whatsapp", "email"],
+                     "default": "auto"},
          "subject": {"type": "string"}, "body": {"type": "string"}},
-         "required": ["channel", "body"]}},
+         "required": ["body"]}},
 
     # ─── gmail / calendar ────────────────────────────────────────────────────
     {"name": "gmail_search",
@@ -104,6 +105,21 @@ SCHEMAS = [
          "location": {"type": "string"},
          "attendees": {"type": "array", "items": {"type": "string"}}},
          "required": ["summary", "start", "end"]}},
+
+    {"name": "drive_search",
+     "description": "Search the owner's Google Drive by full-text content.",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string"}, "limit": {"type": "integer", "default": 10}},
+         "required": ["query"]}},
+    {"name": "drive_read",
+     "description": "Read a Drive file's text (Docs/Sheets/Slides are exported).",
+     "input_schema": {"type": "object", "properties": {"file_id": {"type": "string"}},
+                      "required": ["file_id"]}},
+    {"name": "contacts_search",
+     "description": "Look up one of the owner's Google Contacts — email, phone, org.",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string"}, "limit": {"type": "integer", "default": 8}},
+         "required": ["query"]}},
 
     # ─── the open web ────────────────────────────────────────────────────────
     {"name": "web_search", "description": "Search the web.",
@@ -238,7 +254,7 @@ def execute(name: str, args: dict) -> dict:
                 "weekday": utc.strftime("%A"), "timezone": config.TIMEZONE}
 
     if name == "schedule_followup":
-        return tasks.add(args["when"], args["what"], args.get("channel", "whatsapp"),
+        return tasks.add(args["when"], args["what"], args.get("channel", "auto"),
                          int(args.get("repeat_hours", 0)))
     if name == "list_followups":
         return {"tasks": tasks.pending()}
@@ -246,7 +262,8 @@ def execute(name: str, args: dict) -> dict:
         return tasks.cancel(int(args["id"]))
 
     if name == "send_message":
-        return channels.send(args["channel"], args["body"], args.get("subject", "yuval.bot"))
+        return channels.send(args.get("channel", "auto"), args["body"],
+                             args.get("subject", "your agent"))
 
     if name == "gmail_search":
         return google.search(args["query"], args.get("limit", 8))
@@ -262,6 +279,13 @@ def execute(name: str, args: dict) -> dict:
         return google.create_event(args["summary"], args["start"], args["end"],
                                    args.get("description", ""), args.get("location", ""),
                                    args.get("attendees"))
+
+    if name == "drive_search":
+        return google.drive_search(args["query"], args.get("limit", 10))
+    if name == "drive_read":
+        return google.drive_read(args["file_id"])
+    if name == "contacts_search":
+        return google.contacts_search(args["query"], args.get("limit", 8))
 
     if name == "web_search":
         return web.search(args["query"], args.get("limit", 6))

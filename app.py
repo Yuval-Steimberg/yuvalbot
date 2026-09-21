@@ -3,14 +3,16 @@ Personal agent — web front door, WhatsApp front door, and the clock that makes
 it proactive. All the thinking lives in agent/.
 """
 
-import os, logging
+import os, logging, threading
+from collections import deque
 from functools import wraps
 
 from flask import Flask, jsonify, request, session, redirect
 from apscheduler.schedulers.background import BackgroundScheduler
 
 import agent
-from agent import brain, consolidate, memory, tasks, approvals, config, vault
+from agent import (brain, consolidate, memory, tasks, approvals, config, vault,
+                   telegram)
 from agent.channels import verify_twilio
 
 logging.basicConfig(level=logging.INFO,
@@ -22,7 +24,13 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change-me")
 
 agent.boot()
+
+_ok, _why = config.storage_ok()
+(log.info if _ok else log.error)(f"💾 {_why}")
 log.info(f"🧠 agent ready — {config.missing_summary()}")
+
+if telegram.configured() and config.PUBLIC_URL:
+    telegram.set_webhook(config.PUBLIC_URL)
 
 
 # ─── auth ─────────────────────────────────────────────────────────────────────
@@ -248,19 +256,67 @@ def webhook_whatsapp():
     if config.OWNER_PHONE and frm != config.OWNER_PHONE:
         log.warning(f"ignored inbound from {frm}")
         return "<Response/>", 200, {"Content-Type": "application/xml"}
-    try:
-        reply = brain.run(body, channel="whatsapp")
-    except Exception as e:
-        log.error(f"whatsapp turn failed: {e}")
-        reply = "Something broke on my side — try again."
-    esc = reply.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return (f"<Response><Message>{esc[:1500]}</Message></Response>", 200,
-            {"Content-Type": "application/xml"})
+    sid = request.form.get("MessageSid")
+    if sid in _SEEN:
+        return "<Response/>", 200, {"Content-Type": "application/xml"}
+    _SEEN.append(sid)
+    from agent.channels import send_whatsapp
+    _answer_async(body, "whatsapp", send_whatsapp)
+    return "<Response/>", 200, {"Content-Type": "application/xml"}
+
+
+# Telegram retries an update the webhook does not answer within ~60s and Twilio
+# within 15s — an agent turn routinely takes longer. So every inbound message is
+# acknowledged immediately and answered out of band, and repeats are dropped.
+_SEEN = deque(maxlen=500)
+
+
+def _answer_async(text: str, channel: str, deliver):
+    def go():
+        try:
+            reply = brain.run(text, channel=channel)
+        except Exception as e:
+            log.error(f"{channel} turn failed: {e}")
+            reply = "Something broke on my side — try again."
+        deliver(reply)
+    threading.Thread(target=go, daemon=True).start()
+
+
+@app.route("/webhook/telegram", methods=["POST"])
+def webhook_telegram():
+    """Telegram inbound → agent turn → reply. The main front door in production."""
+    secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+    if secret and request.headers.get("X-Telegram-Bot-Api-Secret-Token") != secret:
+        log.warning("rejected telegram update with bad secret token")
+        return "forbidden", 403
+    update = request.get_json(silent=True) or {}
+    uid = update.get("update_id")
+    if uid in _SEEN:
+        return jsonify({"ok": True})
+    _SEEN.append(uid)
+    chat_id, text, who = telegram.parse(update)
+    allowed = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not allowed:
+        # A bot username is public: anyone can message it. Until the owner's chat
+        # is pinned down, the agent answers nobody — it just hands over the id.
+        log.warning(f"TELEGRAM_CHAT_ID unset — refusing to act (chat {chat_id})")
+        telegram.send(f"Not linked yet. Set TELEGRAM_CHAT_ID={chat_id} in the "
+                      f"deployment's variables, then message me again.", chat_id)
+        return jsonify({"ok": True})
+    if chat_id != allowed:
+        log.warning(f"ignored telegram message from chat {chat_id} ({who})")
+        return jsonify({"ok": True})
+    if not text:
+        return jsonify({"ok": True})
+    _answer_async(text, "telegram", lambda r: telegram.send(r, chat_id))
+    return jsonify({"ok": True})
 
 
 @app.route("/health")
 def health():
-    return "OK", 200
+    ok, why = config.storage_ok()
+    return jsonify({"status": "ok" if ok else "degraded", "storage": why,
+                    "capabilities": config.capabilities()}), (200 if ok else 200)
 
 
 # ─── the clock ────────────────────────────────────────────────────────────────

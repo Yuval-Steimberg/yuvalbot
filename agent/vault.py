@@ -11,7 +11,8 @@ import os, json, base64, hashlib, logging
 from pathlib import Path
 
 log = logging.getLogger("yuvalbot.vault")
-STORE = Path(os.environ.get("VAULT_PATH", "vault.enc"))
+from . import config
+STORE = config.VAULT_PATH
 
 
 def _fernet():

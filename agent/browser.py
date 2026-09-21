@@ -7,12 +7,12 @@ model's own text.
 """
 
 import os, logging
-from . import vault
+from . import vault, config
 
 log = logging.getLogger("yuvalbot.browser")
 
 HEADLESS = os.environ.get("BROWSER_HEADLESS", "1") == "1"
-STATE = os.environ.get("BROWSER_STATE", "browser_state.json")
+STATE = str(config.BROWSER_STATE)
 
 
 def available() -> bool:

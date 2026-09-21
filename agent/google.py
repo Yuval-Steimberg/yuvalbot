@@ -150,3 +150,56 @@ def create_event(summary: str, start: str, end: str, description: str = "",
     log.info(f"📅 event created: {summary}")
     return {"created": True, "id": d.get("id"), "link": d.get("htmlLink"),
             "summary": summary, "start": start}
+
+
+# ─── Drive ────────────────────────────────────────────────────────────────────
+
+DRIVE = "https://www.googleapis.com/drive/v3"
+
+
+def drive_search(query: str, limit: int = 10) -> dict:
+    d = _api("GET", f"{DRIVE}/files", params={
+        "q": f"fullText contains '{query.replace(chr(39), '')}' and trashed=false",
+        "pageSize": min(limit, 25), "fields": "files(id,name,mimeType,modifiedTime,webViewLink)"})
+    return {"files": d.get("files", [])}
+
+
+def drive_read(file_id: str, max_chars: int = 8000) -> dict:
+    meta = _api("GET", f"{DRIVE}/files/{file_id}", params={"fields": "id,name,mimeType"})
+    mime = meta.get("mimeType", "")
+    token = _token()
+    if mime.startswith("application/vnd.google-apps."):
+        export = {"application/vnd.google-apps.document": "text/plain",
+                  "application/vnd.google-apps.spreadsheet": "text/csv",
+                  "application/vnd.google-apps.presentation": "text/plain"}.get(mime)
+        if not export:
+            return {"error": f"cannot export {mime}", "name": meta.get("name")}
+        r = requests.get(f"{DRIVE}/files/{file_id}/export",
+                         headers={"Authorization": f"Bearer {token}"},
+                         params={"mimeType": export}, timeout=45)
+    else:
+        r = requests.get(f"{DRIVE}/files/{file_id}",
+                         headers={"Authorization": f"Bearer {token}"},
+                         params={"alt": "media"}, timeout=45)
+    if r.status_code >= 300:
+        return {"error": f"{r.status_code}: {r.text[:200]}"}
+    text = r.content.decode("utf-8", "replace")
+    return {"id": file_id, "name": meta.get("name"), "text": text[:max_chars],
+            "truncated": len(text) > max_chars}
+
+
+# ─── Contacts (People API) ────────────────────────────────────────────────────
+
+def contacts_search(query: str, limit: int = 8) -> dict:
+    d = _api("GET", "https://people.googleapis.com/v1/people:searchContacts",
+             params={"query": query, "pageSize": min(limit, 20),
+                     "readMask": "names,emailAddresses,phoneNumbers,organizations"})
+    out = []
+    for r in d.get("results", []):
+        p = r.get("person", {})
+        out.append({
+            "name": (p.get("names") or [{}])[0].get("displayName", ""),
+            "emails": [e.get("value") for e in p.get("emailAddresses", [])],
+            "phones": [t.get("value") for t in p.get("phoneNumbers", [])],
+            "org": (p.get("organizations") or [{}])[0].get("name", "")})
+    return {"contacts": out}

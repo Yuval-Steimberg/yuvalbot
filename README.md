@@ -30,17 +30,22 @@ tab shows what is live and what is dark.
 
 | what it unlocks | variables |
 |---|---|
-| WhatsApp in + out | `TWILIO_SID` `TWILIO_TOKEN` `YOUR_PHONE` (Twilio sandbox works) |
-| Gmail + Calendar | `GOOGLE_CLIENT_ID` `GOOGLE_CLIENT_SECRET` `GOOGLE_REFRESH_TOKEN` → `python scripts/google_setup.py` |
+| Telegram in + out (recommended) | `TELEGRAM_BOT_TOKEN` `TELEGRAM_CHAT_ID` `PUBLIC_URL` |
+| WhatsApp in + out | `TWILIO_SID` `TWILIO_TOKEN` `YOUR_PHONE` (sandbox expires every 3 days) |
+| Gmail, Calendar, Drive, Contacts | `GOOGLE_CLIENT_ID` `GOOGLE_CLIENT_SECRET` `GOOGLE_REFRESH_TOKEN` → `python scripts/google_setup.py` |
 | Plain email out | `RESEND_API_KEY` `EMAIL_TO` `EMAIL_FROM` |
 | Good web search | `BRAVE_API_KEY` or `SERPER_API_KEY` (falls back to DuckDuckGo) |
 | Real browser | `pip install playwright && playwright install chromium` |
 | Stored site logins | `VAULT_KEY` (any long string) |
 | Shell on its own box | `ENABLE_SHELL=1` (approval-gated) |
 
-Point Twilio's WhatsApp sandbox webhook at `https://<your-host>/webhook/whatsapp`
-and the agent is reachable from your phone. Inbound requests are rejected unless
-they carry a valid `X-Twilio-Signature`.
+Set `PUBLIC_URL` and the agent registers its own Telegram webhook at boot; message
+the bot once and it tells you the `TELEGRAM_CHAT_ID` to pin it to you. Telegram is
+the better front door for a proactive agent: no 24-hour reply window, no message
+templates, no sandbox to re-join every three days. WhatsApp still works — point
+Twilio at `/webhook/whatsapp`; inbound requests without a valid
+`X-Twilio-Signature` are rejected, as are Telegram updates with the wrong secret
+token or from any chat that is not yours.
 
 ## The four pieces
 
@@ -114,13 +119,23 @@ Web UI tabs: **chat**, **memory** (search what it knows), **approvals**,
 
 ## Deployment
 
-`Procfile` and `nixpacks.toml` are set up for Railway. Two things will bite you:
+**[DEPLOY.md](DEPLOY.md) is the step-by-step for Railway.** In short: the
+`Dockerfile` (Chromium included) and `railway.json` are ready, you mount a volume
+at `/data`, set `DATA_DIR=/data`, paste the variables from `.env.example`, and
+generate a domain. Two things that bite people:
 
-* **The filesystem is ephemeral.** Mount a volume at `MEMORY_DIR`, or set
-  `MEMORY_GIT_REMOTE` to a private repo so every memory commit is pushed off-box.
-  Without one of those, the agent forgets everything on each deploy.
-* **One worker only.** The scheduler runs in-process; multiple gunicorn workers
-  would run every follow-up several times.
+* **All state lives under `DATA_DIR`** — memory, the task DB, the vault, saved
+  browser logins. Without a volume the container is wiped on every deploy and the
+  agent starts each week a stranger. `/health` reports
+  `persistent_storage: false` when that is the case, and the logs say so at boot.
+  Belt and braces: set `MEMORY_GIT_REMOTE` and every memory commit is pushed to a
+  private repo too.
+* **One worker, one replica.** The scheduler runs in-process; two workers means
+  every follow-up fires twice.
+
+Inbound webhooks are acknowledged immediately and answered out of band, because
+Telegram retries anything slower than ~60s and Twilio anything slower than 15s —
+otherwise a long turn would run two or three times.
 
 ## What this is not
 
@@ -132,3 +147,8 @@ texts as you), and **no autonomous spending** — checkout flows are reachable b
 `browser_act` but always stop at the approval gate. Everything else — the always
 on conversation, the memory, the proactive follow-ups, mail and calendar,
 browsing — is here and working.
+
+Connected: Telegram, WhatsApp, Gmail, Google Calendar, Google Drive, Google
+Contacts, Resend email, Brave/Serper/DuckDuckGo search, a real Chromium, and a
+shell on its own box. Not connected: iMessage and SMS as you, Slack, Notion,
+banking or payment rails, your screen, your location.
