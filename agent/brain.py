@@ -1,50 +1,71 @@
-"""The agent loop: tool-use turns over git-backed memory."""
+"""The agent loop — one ongoing conversation, memory in front, action behind."""
 
 import logging
-from . import memory, tasks, tools, llm
+from datetime import datetime, timezone
+from . import memory, tasks, tools, llm, approvals, config
 
 log = logging.getLogger("yuvalbot.brain")
 
-SYSTEM = """You are yuval.bot, a personal agent for Yuval Steimberg.
+SYSTEM = """You are {owner}'s personal agent. One ongoing conversation, no sessions:
+you remember everything worth remembering and you act, you do not just advise.
 
-MEMORY IS THE PRODUCT.
-- Before answering anything about Yuval, his people, plans, preferences or past
-  decisions, call memory_search. Never answer from assumption.
-- After learning something durable, call memory_write. Pick the narrowest kind:
-  people, organizations, facts, preferences, decisions, communications,
-  timelines, workstreams.
-- Write records a stranger could read: dated, sourced, specific. Add aliases —
-  every word Yuval might later search with — because retrieval is keyword based.
-- When a new fact contradicts an old one, append a dated correction to the same
-  record (mode "append"); archive only when the whole record is obsolete. Git
-  keeps the old version.
+MEMORY FIRST
+- Before answering anything about {owner}, their people, plans, preferences or past
+  decisions: memory_search. Never answer from assumption. If memory is empty, say so.
+- After learning something durable: memory_write, narrowest true kind (people,
+  organizations, facts, preferences, decisions, communications, timelines,
+  workstreams). Dated, sourced, specific — a stranger should be able to read it.
+- Add aliases: every word {owner} might search with later. Retrieval is keyword based.
+- A changed fact is an APPEND with today's date and the correction, never a silent
+  overwrite. Archive only when a whole record is dead. Git keeps the history.
 
-BE PROACTIVE, NOT CHATTY.
-- Every open loop gets a schedule_followup with a concrete date. A promise with
-  no follow-up scheduled is a dropped thread.
-- When a scheduled follow-up fires you are talking to no one: do the work, then
-  use send_message to reach Yuval, and only if you have something worth his
-  attention. Silence is a valid outcome — say so and stop.
+ACT, DON'T DELEGATE BACK
+- You have Gmail, Calendar, web search, a real browser, and your own scheduler.
+  Use them. Reading {owner}'s mail to answer a question is normal, not intrusive.
+- Anything that spends money, emails a third party, invites someone, or changes
+  state on a website comes back as "awaiting_approval" with an id. That is not an
+  error: tell {owner} exactly what you want to do and ask for a yes. When they say
+  yes, call decide_approval. Never claim you did something that is still pending.
+- If a tool is unavailable for want of credentials, say which one and what is
+  needed, once, then carry on with what you can do.
 
-STYLE: short, direct, no filler. Say what you did and what is next. If you are
-missing something you need, ask one specific question."""
+BE PROACTIVE, NOT CHATTY
+- Every open loop ends with schedule_followup and a concrete date. A promise with
+  no follow-up booked is a dropped thread.
+- When a follow-up fires you are talking to no one. Do the work, then use
+  send_message only if there is something worth {owner}'s attention. Silence is a
+  valid outcome — say so and stop.
+
+STYLE
+Short. Direct. No filler, no "I'd be happy to". Say what you did, what you found,
+what you need. One specific question when you are blocked, not three vague ones."""
 
 
 def _context() -> str:
     s = memory.stats()
+    caps = config.capabilities()
+    lines = [
+        f"Now: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC (%A)')}, "
+        f"owner timezone {config.TIMEZONE}.",
+        f"Memory: {sum(v for k, v in s.items() if k != 'commits')} records "
+        f"({', '.join(f'{k} {v}' for k, v in s.items() if v and k != 'commits') or 'empty'}), "
+        f"{s['commits']} commits.",
+        f"Live: {', '.join(k for k, v in caps.items() if v) or 'nothing'}. "
+        f"Unavailable: {', '.join(k for k, v in caps.items() if not v) or 'none'}.",
+    ]
     pend = tasks.pending(8)
-    lines = [f"Memory: {sum(v for k, v in s.items() if k != 'commits')} records "
-             f"({', '.join(f'{k} {v}' for k, v in s.items() if v and k != 'commits')}), "
-             f"{s['commits']} commits."]
     if pend:
-        lines.append("Scheduled follow-ups: " +
+        lines.append("Follow-ups booked: " +
                      "; ".join(f"#{t['id']} {t['due'][:16]} {t['what'][:60]}" for t in pend))
+    waiting = approvals.pending(8)
+    if waiting:
+        lines.append("AWAITING YOUR OWNER'S YES: " +
+                     "; ".join(f"#{a['id']} {a['summary'][:80]}" for a in waiting))
     return "\n".join(lines)
 
 
-def run(user_input: str, channel: str = "web", history_turns: int = 10,
-        max_steps: int = 8) -> str:
-    """One agent turn. Returns the final text reply."""
+def run(user_input: str, channel: str = "web", history_turns: int = 12,
+        max_steps: int = 12) -> str:
     msgs = []
     for t in tasks.recent_turns(history_turns):
         if t["content"].strip():
@@ -53,14 +74,15 @@ def run(user_input: str, channel: str = "web", history_turns: int = 10,
     msgs.append({"role": "user", "content": user_input})
     tasks.log_turn("user", user_input, channel)
 
-    system = f"{SYSTEM}\n\n<current_state>\n{_context()}\n</current_state>"
-    reply_parts = []
+    system = (SYSTEM.format(owner=config.OWNER_NAME) +
+              f"\n\n<current_state>\n{_context()}\n</current_state>")
+    parts = []
 
-    for step in range(max_steps):
-        resp = llm.call(msgs, system=system, tools=tools.SCHEMAS)
+    for _ in range(max_steps):
+        resp = llm.call(msgs, system=system, tools=tools.SCHEMAS, model=config.MODEL)
         content = resp.get("content", [])
         msgs.append({"role": "assistant", "content": content})
-        reply_parts += [b["text"] for b in content if b.get("type") == "text"]
+        parts += [b["text"] for b in content if b.get("type") == "text"]
 
         calls = [b for b in content if b.get("type") == "tool_use"]
         if not calls:
@@ -70,25 +92,25 @@ def run(user_input: str, channel: str = "web", history_turns: int = 10,
             log.info(f"🔧 {c['name']} {str(c.get('input'))[:120]}")
             out = tools.dispatch(c["name"], c.get("input") or {})
             results.append({"type": "tool_result", "tool_use_id": c["id"],
-                            "content": str(out)[:6000]})
+                            "content": str(out)[:8000]})
         msgs.append({"role": "user", "content": results})
     else:
-        reply_parts.append("(stopped: hit the tool-step limit)")
+        parts.append("(stopped: hit the tool-step limit)")
 
-    reply = "\n".join(p.strip() for p in reply_parts if p.strip()) or "(no reply)"
+    reply = "\n".join(p.strip() for p in parts if p.strip()) or "(no reply)"
     tasks.log_turn("assistant", reply, channel)
-    memory.capture(f"chat-{channel}", f"USER: {user_input}\n\nBOT: {reply}")
+    memory.capture(f"chat-{channel}", f"USER: {user_input}\n\nAGENT: {reply}")
     return reply
 
 
 def tick() -> list[dict]:
-    """Run every due follow-up. Called by the scheduler — this is the proactivity."""
+    """Run every due follow-up. This is the proactivity."""
     done = []
     for t in tasks.due_now():
         log.info(f"⏰ follow-up #{t['id']}: {t['what'][:80]}")
-        prompt = (f"[SCHEDULED FOLLOW-UP #{t['id']}, due {t['due']}]\n{t['what']}\n\n"
-                  f"Yuval is not watching. Do the work now. If it is worth telling him, "
-                  f"send_message on channel '{t['channel']}'. Otherwise say why not.")
+        prompt = (f"[SCHEDULED FOLLOW-UP #{t['id']}, booked for {t['due']}]\n{t['what']}\n\n"
+                  f"{config.OWNER_NAME} is not watching. Do the work now. If it is worth "
+                  f"telling them, send_message on '{t['channel']}'. Otherwise say why not.")
         try:
             out = run(prompt, channel=f"followup:{t['channel']}")
         except Exception as e:
@@ -97,3 +119,15 @@ def tick() -> list[dict]:
         tasks.finish(t["id"], out)
         done.append({"id": t["id"], "result": out[:400]})
     return done
+
+
+def daily_briefing() -> str:
+    """Once a day, look at the world and speak only if it earns the interruption."""
+    return run(
+        "[DAILY REVIEW — nobody is watching]\n"
+        "Check today's calendar, unread mail from the last day, your open workstreams "
+        "and any approvals still pending. Decide if anything genuinely needs "
+        f"{config.OWNER_NAME}'s attention today. If yes, send_message one short "
+        "WhatsApp: what is happening, what you have already handled, what you need "
+        "from them. If nothing is worth an interruption, send nothing and say so.",
+        channel="followup:whatsapp")

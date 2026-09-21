@@ -1,7 +1,13 @@
-"""Local REPL:  python -m agent.cli            → chat
-                python -m agent.cli tick       → run due follow-ups
-                python -m agent.cli consolidate→ run the nightly pass
-                python -m agent.cli search "q" → grep memory
+"""Local REPL and operator commands.
+
+  python -m agent.cli                 chat
+  python -m agent.cli tick            run due follow-ups now
+  python -m agent.cli brief           run the daily review now
+  python -m agent.cli consolidate     run the nightly memory pass now
+  python -m agent.cli approvals       list what is waiting on you
+  python -m agent.cli approvals 3 yes approve (or 'no' to deny) #3
+  python -m agent.cli search "japan"  grep memory
+  python -m agent.cli stats
 """
 import sys, logging
 import agent
@@ -15,6 +21,16 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "chat"
     if cmd == "tick":
         print(brain.tick()); return
+    if cmd == "brief":
+        print(brain.daily_briefing()); return
+    if cmd == "approvals":
+        from agent import approvals
+        if len(sys.argv) > 3:
+            print(approvals.decide(int(sys.argv[2]), sys.argv[3] in ("yes", "y", "true")))
+        else:
+            for a in approvals.pending():
+                print(f"#{a['id']}  {a['tool']:<22} {a['summary'][:70]}")
+        return
     if cmd == "consolidate":
         print(consolidate.run()); return
     if cmd == "search":

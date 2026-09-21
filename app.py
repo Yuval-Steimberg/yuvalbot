@@ -1,40 +1,32 @@
 """
-YUVAL.BOT — Main App
-Fixed: init_db() called at module level so gunicorn initializes DB on startup.
-Fixed: Glassdoor/ZipRecruiter removed (blocked for Israel).
-Fixed: Scan button no longer freezes — polls every 10s for completion.
+Personal agent — web front door, WhatsApp front door, and the clock that makes
+it proactive. All the thinking lives in agent/.
 """
 
-import os, logging, threading
-from datetime import datetime
+import os, logging
 from functools import wraps
-from flask import Flask, render_template_string, jsonify, request, session, redirect
-from apscheduler.schedulers.background import BackgroundScheduler
-from scanner import init_db, all_jobs, set_status, run_scan
-import agent
-from agent import brain, consolidate, memory as mem
 
-# ─── Logging ──────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(message)s",
-    datefmt="%H:%M:%S",
-    handlers=[logging.StreamHandler()]
-)
+from flask import Flask, jsonify, request, session, redirect
+from apscheduler.schedulers.background import BackgroundScheduler
+
+import agent
+from agent import brain, consolidate, memory, tasks, approvals, config, vault
+from agent.channels import verify_twilio
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(levelname)-8s %(message)s",
+                    datefmt="%H:%M:%S", handlers=[logging.StreamHandler()])
 log = logging.getLogger("yuvalbot")
 
-# ─── Flask ────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "yuval-bot-2026-secret")
+app.secret_key = os.environ.get("SECRET_KEY", "change-me")
 
-SCAN_STATUS = {"last": "Never", "running": False, "next": "–", "count": 0}
-
-# ── CRITICAL FIX: init DB at module level so gunicorn workers pick it up ──────
-init_db()
 agent.boot()
-log.info("✅ Database + memory ready")
+log.info(f"🧠 agent ready — {config.missing_summary()}")
 
-# ─── Auth ─────────────────────────────────────────────────────────────────────
+
+# ─── auth ─────────────────────────────────────────────────────────────────────
+
 def login_required(f):
     @wraps(f)
     def dec(*a, **kw):
@@ -43,445 +35,243 @@ def login_required(f):
         return f(*a, **kw)
     return dec
 
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     err = ""
     if request.method == "POST":
-        if request.form.get("password") == os.environ.get("DASHBOARD_PASSWORD", "yuval2026"):
+        if request.form.get("password") == os.environ.get("DASHBOARD_PASSWORD", "changeme"):
             session["ok"] = True
+            session.permanent = True
             return redirect("/")
         err = "Wrong password"
-    return f"""<!DOCTYPE html><html><head><title>YUVAL.BOT</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@800&display=swap');
+    return f"""<!DOCTYPE html><html><head><title>agent</title>
+<meta name=viewport content="width=device-width,initial-scale=1"><style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:#0a0a0f;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:'JetBrains Mono',monospace}}
-.box{{background:#0d0d1a;border:1px solid #1a1a2e;border-radius:12px;padding:44px;width:340px;text-align:center}}
-.logo{{font-family:'Syne',sans-serif;font-size:26px;font-weight:800;color:#fff;margin-bottom:4px}}
-.logo span{{color:#00ff88}}.sub{{color:#444;font-size:11px;margin-bottom:32px}}
-input{{width:100%;background:#060608;border:1px solid #1a1a2e;color:#fff;padding:11px 14px;border-radius:5px;font-family:inherit;font-size:13px;margin-bottom:12px}}
-input:focus{{outline:none;border-color:#00ff88}}
-button{{width:100%;background:#00ff88;color:#000;border:none;padding:12px;border-radius:5px;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer}}
-.err{{color:#ff5555;font-size:11px;margin-top:10px}}
-</style></head><body>
-<div class="box">
-  <div class="logo">YUVAL<span>.BOT</span></div>
-  <div class="sub">Job Hunter Dashboard</div>
-  <form method="POST">
-    <input type="password" name="password" placeholder="Enter password" autofocus>
-    <button>Enter →</button>
-    <div class="err">{err}</div>
-  </form>
-</div></body></html>"""
+body{{background:#0a0a0f;display:flex;align-items:center;justify-content:center;
+min-height:100vh;font:14px ui-monospace,monospace;color:#ddd}}
+.box{{background:#0d0d1a;border:1px solid #1a1a2e;border-radius:12px;padding:40px;width:330px}}
+h1{{font-size:20px;color:#fff;margin-bottom:24px}}h1 span{{color:#00ff88}}
+input{{width:100%;background:#060608;border:1px solid #1a1a2e;color:#fff;padding:11px;
+border-radius:5px;font:inherit;margin-bottom:12px}}
+button{{width:100%;background:#00ff88;color:#000;border:0;padding:12px;border-radius:5px;
+font:inherit;font-weight:700;cursor:pointer}}.e{{color:#f55;font-size:12px;margin-top:10px}}
+</style></head><body><div class=box><h1>agent<span>.</span></h1>
+<form method=POST><input type=password name=password placeholder=Password autofocus>
+<button>Enter</button><div class=e>{err}</div></form></div></body></html>"""
+
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect("/login")
 
-# ─── Dashboard ────────────────────────────────────────────────────────────────
-DASH = """<!DOCTYPE html>
-<html lang="en"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>YUVAL.BOT</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@600;700;800&display=swap');
-:root{--g:#00ff88;--bg:#0a0a0f;--card:#0d0d1a;--b:#1a1a2e;--t:#c8c8d0;--d:#555;--y:#ffe44d;--r:#ff5555;--bl:#4d9fff}
+
+# ─── UI ───────────────────────────────────────────────────────────────────────
+
+UI = """<!DOCTYPE html><html><head><title>agent</title>
+<meta name=viewport content="width=device-width,initial-scale=1"><style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--t);font-family:'JetBrains Mono',monospace;min-height:100vh}
-nav{background:#0d0d1a;border-bottom:1px solid var(--b);padding:13px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
-.logo{font-family:'Syne',sans-serif;font-weight:800;font-size:17px;color:#fff}.logo span{color:var(--g)}
-.nav-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.live{display:inline-flex;align-items:center;gap:5px;background:rgba(0,255,136,.08);border:1px solid rgba(0,255,136,.2);color:var(--g);font-size:10px;padding:4px 10px;border-radius:3px}
-.dot{width:6px;height:6px;border-radius:50%;background:var(--g);animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.btn{cursor:pointer;border:none;font-family:inherit;font-size:11px;font-weight:700;padding:7px 14px;border-radius:4px;transition:all .15s;letter-spacing:.04em}
-.btn-g{background:var(--g);color:#000}.btn-g:hover{opacity:.85}
-.btn-o{background:transparent;border:1px solid var(--g);color:var(--g)}.btn-o:hover{background:rgba(0,255,136,.08)}
-.btn-y{background:transparent;border:1px solid var(--y);color:var(--y)}
-.btn-r{background:transparent;border:1px solid var(--r);color:var(--r)}
-.btn-sm{padding:4px 9px;font-size:10px}
-.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;padding:16px 24px;border-bottom:1px solid var(--b)}
-.stat{background:var(--card);border:1px solid var(--b);border-radius:6px;padding:12px 16px}
-.sn{font-family:'Syne',sans-serif;font-size:24px;font-weight:800;color:#fff;line-height:1}
-.sl{font-size:9px;color:var(--d);margin-top:3px;text-transform:uppercase;letter-spacing:.08em}
-.bar{background:#0d0d1a;border-bottom:1px solid var(--b);padding:6px 24px;font-size:10px;color:var(--d);display:flex;gap:16px;flex-wrap:wrap}
-.bar span{color:var(--t)}
-.scanning{display:none;background:#0a1a12;border-bottom:1px solid var(--g);padding:8px 24px;font-size:11px;color:var(--g);align-items:center;gap:10px}
-.scanning.show{display:flex}
-.filters{padding:12px 24px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--b)}
-.fb{cursor:pointer;font-family:inherit;font-size:10px;padding:4px 11px;border-radius:3px;border:1px solid var(--b);background:transparent;color:var(--d);transition:all .15s;text-transform:uppercase;letter-spacing:.06em}
-.fb:hover,.fb.active{border-color:var(--g);color:var(--g);background:rgba(0,255,136,.05)}
-.table-w{padding:0 24px 60px;overflow-x:auto}
-table{width:100%;border-collapse:collapse;margin-top:14px}
-th{font-size:9px;color:var(--d);text-transform:uppercase;letter-spacing:.1em;padding:9px 10px;border-bottom:1px solid var(--b);text-align:left;white-space:nowrap}
-td{padding:11px 10px;border-bottom:1px solid #111;font-size:12px;vertical-align:middle}
-tr:hover td{background:#0d0d1a}
-.sc{font-family:'Syne',sans-serif;font-weight:800;font-size:15px}
-.sc.hi{color:var(--g)}.sc.mi{color:var(--y)}.sc.lo{color:var(--r)}
-.sb{display:inline-block;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:600;white-space:nowrap}
-.s-New{background:rgba(77,159,255,.1);border:1px solid rgba(77,159,255,.3);color:var(--bl)}
-.s-Applied{background:rgba(0,255,136,.1);border:1px solid rgba(0,255,136,.3);color:var(--g)}
-.s-Skipped{background:rgba(85,85,85,.1);border:1px solid #222;color:var(--d)}
-.src{font-size:9px;padding:2px 6px;border-radius:2px;border:1px solid var(--b);color:var(--d);white-space:nowrap}
-.jt{color:#fff;font-weight:600;font-size:12px}.co{color:var(--d);font-size:11px;margin-top:2px}
-.acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
-.mo{display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:1000;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto}
-.mo.open{display:flex}
-.mbox{background:#0d0d1a;border:1px solid var(--b);border-radius:10px;width:100%;max-width:740px}
-.mh{background:#111;padding:18px 22px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--b);border-radius:10px 10px 0 0}
-.mh h2{font-family:'Syne',sans-serif;font-size:15px;color:#fff}
-.mc{cursor:pointer;color:var(--d);font-size:16px;background:transparent;border:none;font-family:inherit}.mc:hover{color:#fff}
-.mb{padding:22px}
-.mt{display:flex;gap:0;margin-bottom:18px;border-bottom:1px solid var(--b)}
-.mtb{cursor:pointer;background:transparent;border:none;font-family:inherit;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--d);padding:7px 13px;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .15s}
-.mtb:hover,.mtb.a{color:var(--g);border-bottom-color:var(--g)}
-.mcon{display:none}.mcon.a{display:block}
-pre.cv{background:#060608;border:1px solid var(--b);border-radius:6px;padding:14px;font-size:11px;line-height:1.75;white-space:pre-wrap;color:#ccc;max-height:400px;overflow-y:auto}
-.cpb{background:transparent;border:1px solid var(--g);color:var(--g);font-family:inherit;font-size:10px;padding:4px 9px;border-radius:3px;cursor:pointer;float:right;margin-bottom:6px}
-.cpb:hover{background:rgba(0,255,136,.08)}
-.toast{position:fixed;bottom:20px;right:20px;background:#00aa55;color:#fff;padding:11px 18px;border-radius:6px;font-size:11px;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none}
-.toast.show{opacity:1}
-.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--b);border-top-color:var(--g);border-radius:50%;animation:sp .7s linear infinite;vertical-align:middle;margin-right:5px}
-@keyframes sp{to{transform:rotate(360deg)}}
-@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.table-w{padding:0 12px 40px}nav{padding:10px 14px}}
+body{background:#0a0a0f;color:#dde;font:14px/1.65 ui-monospace,SFMono-Regular,monospace;
+display:flex;flex-direction:column;height:100vh}
+header{display:flex;gap:18px;align-items:center;padding:12px 18px;border-bottom:1px solid #1a1a2e}
+header b{color:#00ff88}header a{color:#556;text-decoration:none;cursor:pointer}
+header a.on{color:#fff}header .sp{flex:1}header small{color:#445}
+main{flex:1;overflow-y:auto;padding:18px}
+.pane{display:none;flex-direction:column;gap:14px}.pane.on{display:flex}
+.m{max-width:820px;white-space:pre-wrap;word-wrap:break-word}
+.u{color:#fff;border-left:3px solid #00ff88;padding-left:12px}
+.a{color:#9aa;border-left:3px solid #1a1a2e;padding-left:12px}
+form{display:flex;gap:8px;padding:14px;border-top:1px solid #1a1a2e}
+input{flex:1;background:#060608;border:1px solid #1a1a2e;color:#fff;padding:12px;
+border-radius:6px;font:inherit}
+button{background:#00ff88;color:#000;border:0;padding:0 20px;border-radius:6px;
+font:inherit;font-weight:700;cursor:pointer}
+.card{border:1px solid #1a1a2e;border-radius:8px;padding:14px;background:#0d0d16}
+.card h4{color:#fff;font-size:13px;margin-bottom:6px}
+.card .meta{color:#556;font-size:11px}
+.row{display:flex;gap:8px;margin-top:10px}
+.row button{padding:7px 14px;font-size:12px}
+.no{background:#2a1a1e;color:#f77}
 </style></head><body>
-
-<nav>
-  <div class="logo">YUVAL<span>.BOT</span></div>
-  <div class="nav-r">
-    <span class="live"><span class="dot"></span>LIVE</span>
-    <button class="btn btn-g" id="scanBtn" onclick="doScan()">⟳ Scan Now</button>
-    <button class="btn btn-r btn-sm" onclick="clearDB()" style="border-color:#ff8c42;color:#ff8c42">🗑 Clear DB</button>
-    <a href="/logout"><button class="btn btn-r btn-sm">Logout</button></a>
-  </div>
-</nav>
-
-<div class="scanning" id="scanBanner">
-  <span class="spin"></span>
-  Scanning Indeed · LinkedIn · Google Jobs — jobs appear automatically every 10s
-</div>
-
-<div class="bar">
-  <div>Last scan: <span id="lastScan">–</span></div>
-  <div>Next auto-scan: <span id="nextScan">–</span></div>
-  <div>Sources: <span style="color:var(--g)">Indeed · LinkedIn · Google Jobs</span></div>
-</div>
-
-<div class="stats">
-  <div class="stat"><div class="sn" id="s0">–</div><div class="sl">Total Found</div></div>
-  <div class="stat"><div class="sn" id="s1" style="color:var(--bl)">–</div><div class="sl">New</div></div>
-  <div class="stat"><div class="sn" id="s2" style="color:var(--g)">–</div><div class="sl">Applied</div></div>
-  <div class="stat"><div class="sn" id="s3" style="color:var(--y)">–</div><div class="sl">Avg Score</div></div>
-  <div class="stat"><div class="sn" id="s4" style="color:var(--d)">–</div><div class="sl">Skipped</div></div>
-</div>
-
-<div class="filters">
-  <button class="fb active" onclick="filt('all',this)">All</button>
-  <button class="fb" onclick="filt('New',this)">New</button>
-  <button class="fb" onclick="filt('Applied',this)">Applied</button>
-  <button class="fb" onclick="filt('Skipped',this)">Skipped</button>
-  <button class="fb" onclick="filt('indeed',this)">Indeed</button>
-  <button class="fb" onclick="filt('linkedin',this)">LinkedIn</button>
-  <button class="fb" onclick="filt('google',this)">Google</button>
-</div>
-
-<div class="table-w">
-  <table><thead><tr>
-    <th>Score</th><th>Job</th><th>Source</th><th>Found</th><th>Status</th><th>Actions</th>
-  </tr></thead>
-  <tbody id="tbody"><tr><td colspan="6" style="text-align:center;color:var(--d);padding:40px">
-    Click ⟳ Scan Now to search for jobs
-  </td></tr></tbody></table>
-</div>
-
-<div class="mo" id="modal" onclick="if(event.target===this)closeMo()">
-  <div class="mbox">
-    <div class="mh"><h2 id="mtitle">Details</h2><button class="mc" onclick="closeMo()">✕</button></div>
-    <div class="mb">
-      <div class="mt">
-        <button class="mtb a" onclick="swTab('cv',this)">Tailored CV</button>
-        <button class="mtb" onclick="swTab('cl',this)">Cover Letter</button>
-        <button class="mtb" onclick="swTab('li',this)">LinkedIn Msg</button>
-      </div>
-      <div class="mcon a" id="tab-cv"><button class="cpb" onclick="cp('cv-t')">COPY</button><pre class="cv" id="cv-t"></pre></div>
-      <div class="mcon" id="tab-cl"><button class="cpb" onclick="cp('cl-t')">COPY</button><pre class="cv" id="cl-t"></pre></div>
-      <div class="mcon" id="tab-li"><button class="cpb" onclick="cp('li-t')">COPY</button><pre class="cv" id="li-t"></pre></div>
-    </div>
-  </div>
-</div>
-<div class="toast" id="toast"></div>
-
+<header><b>agent.</b>
+<a id=t-chat class=on onclick="tab('chat')">chat</a>
+<a id=t-mem onclick="tab('mem')">memory</a>
+<a id=t-appr onclick="tab('appr')">approvals <i id=badge></i></a>
+<a id=t-cap onclick="tab('cap')">status</a>
+<span class=sp></span><small id=hint></small><a href=/logout>exit</a></header>
+<main>
+ <div id=p-chat class="pane on"></div>
+ <div id=p-mem class=pane></div>
+ <div id=p-appr class=pane></div>
+ <div id=p-cap class=pane></div>
+</main>
+<form id=f><input id=i placeholder="Talk to your agent…" autocomplete=off autofocus>
+<button>Send</button></form>
 <script>
-let jobs=[], cur='all', pollTimer=null;
-
-async function load(){
-  try{
-    const [jr,sr]=await Promise.all([fetch('/api/jobs'),fetch('/api/scan-status')]);
-    jobs=await jr.json();
-    const si=await sr.json();
-    document.getElementById('lastScan').textContent=si.last||'Never';
-    document.getElementById('nextScan').textContent=si.next||'–';
-    const banner=document.getElementById('scanBanner');
-    const btn=document.getElementById('scanBtn');
-    if(si.running){
-      banner.classList.add('show');
-      btn.disabled=true;
-      btn.innerHTML='<span class="spin"></span>Scanning...';
-    } else {
-      banner.classList.remove('show');
-      btn.disabled=false;
-      btn.textContent='⟳ Scan Now';
-    }
-    stats(); render();
-  }catch(e){console.error(e);}
-}
-
-function stats(){
-  document.getElementById('s0').textContent=jobs.length;
-  document.getElementById('s1').textContent=jobs.filter(j=>j.status==='New').length;
-  document.getElementById('s2').textContent=jobs.filter(j=>j.status==='Applied').length;
-  document.getElementById('s4').textContent=jobs.filter(j=>j.status==='Skipped').length;
-  const a=jobs.length?Math.round(jobs.reduce((s,j)=>s+(j.fit_score||0),0)/jobs.length):0;
-  document.getElementById('s3').textContent=a+'%';
-}
-
-function render(){
-  const srcs=['indeed','linkedin','glassdoor','google','zip_recruiter'];
-  const f=cur==='all'?jobs:srcs.includes(cur)?jobs.filter(j=>j.source===cur):jobs.filter(j=>j.status===cur);
-  if(!f.length){document.getElementById('tbody').innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--d);padding:40px">No jobs yet — click ⟳ Scan Now</td></tr>';return;}
-  document.getElementById('tbody').innerHTML=f.map(j=>{
-    const sc=j.fit_score||0,cls=sc>=88?'hi':sc>=72?'mi':'lo';
-    const dt=(j.date_found||'').split('T')[0];
-    return `<tr>
-      <td><span class="sc ${cls}">${sc}%</span></td>
-      <td><div class="jt">${j.title}</div><div class="co">${j.company} · ${j.location}</div></td>
-      <td><span class="src">${j.source||'–'}</span></td>
-      <td style="color:var(--d);font-size:11px">${dt}</td>
-      <td><span class="sb s-${j.status}">${j.status}</span></td>
-      <td><div class="acts">
-        <button class="btn btn-o btn-sm" onclick="show('${j.id}')">View CV</button>
-        <a href="${j.url}" target="_blank"><button class="btn btn-g btn-sm">Apply ↗</button></a>
-        <button class="btn btn-y btn-sm" onclick="mark('${j.id}','Applied')">✓</button>
-        <button class="btn btn-r btn-sm" onclick="mark('${j.id}','Skipped')">✕</button>
-      </div></td></tr>`;
-  }).join('');
-}
-
-function filt(f,el){cur=f;document.querySelectorAll('.fb').forEach(b=>b.classList.remove('active'));el.classList.add('active');render();}
-
-function show(id){
-  const j=jobs.find(x=>x.id===id);if(!j)return;
-  document.getElementById('mtitle').textContent=j.title+' @ '+j.company;
-  document.getElementById('cv-t').textContent=j.tailored_cv||'Not generated yet.';
-  document.getElementById('cl-t').textContent=j.cover_letter||'Not generated yet.';
-  document.getElementById('li-t').textContent=j.linkedin_msg||'Not generated yet.';
-  swTab('cv',document.querySelector('.mtb'));
-  document.getElementById('modal').classList.add('open');
-}
-function closeMo(){document.getElementById('modal').classList.remove('open');}
-function swTab(n,el){
-  document.querySelectorAll('.mcon').forEach(c=>c.classList.remove('a'));
-  document.querySelectorAll('.mtb').forEach(t=>t.classList.remove('a'));
-  document.getElementById('tab-'+n).classList.add('a');if(el)el.classList.add('a');
-}
-async function mark(id,st){
-  await fetch('/api/mark/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:st})});
-  const j=jobs.find(x=>x.id===id);if(j)j.status=st;
-  stats();render();toast(st==='Applied'?'✓ Marked Applied!':'Marked Skipped');
-}
-async function doScan(){
-  const r=await fetch('/api/scan',{method:'POST'});
-  const d=await r.json();
-  if(!d.ok){toast('Already scanning — check the banner above');return;}
-  toast('🔍 Scan started! Jobs will appear every 10s');
-  if(pollTimer)clearInterval(pollTimer);
-  pollTimer=setInterval(async()=>{
-    await load();
-    const sr=await fetch('/api/scan-status');
-    const si=await sr.json();
-    if(!si.running){
-      clearInterval(pollTimer);pollTimer=null;
-      toast('✅ Scan complete — '+si.count+' new jobs found!');
-    }
-  },10000);
-}
-function cp(id){navigator.clipboard.writeText(document.getElementById(id).textContent);toast('Copied!');}
-function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),4000);}
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMo();});
-async function clearDB(){
-  if(!confirm('Clear all jobs and rescan from scratch?'))return;
-  await fetch('/api/clear',{method:'POST'});
-  toast('🗑 Database cleared — click Scan Now to rescan');
-  jobs=[];stats();render();
-}
-setInterval(load,30000);
-load();
+let cur='chat';
+function tab(n){cur=n;for(const x of ['chat','mem','appr','cap']){
+ document.getElementById('p-'+x).className='pane'+(x==n?' on':'');
+ document.getElementById('t-'+x).className=(x==n?'on':'')}
+ document.getElementById('f').style.display=n=='chat'?'flex':'none';
+ if(n=='mem')loadMem();if(n=='appr')loadAppr();if(n=='cap')loadCap()}
+function add(cls,txt){const d=document.createElement('div');d.className='m '+cls;
+ d.textContent=txt;const p=document.getElementById('p-chat');p.appendChild(d);
+ p.scrollTop=p.scrollHeight;document.querySelector('main').scrollTop=1e9;return d}
+document.getElementById('f').onsubmit=async e=>{e.preventDefault();
+ const i=document.getElementById('i'),t=i.value.trim();if(!t)return;i.value='';add('u',t);
+ const p=add('a','…');
+ try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({message:t})});const j=await r.json();
+  p.textContent=j.reply||j.error||'(no reply)'}catch(e){p.textContent='error: '+e}
+ poll()}
+async function loadMem(){const q=prompt?null:null;const r=await fetch('/api/memory?q=');
+ const j=await r.json();const p=document.getElementById('p-mem');
+ p.innerHTML='<div class=card><h4>memory</h4><div class=meta>'+
+  Object.entries(j.stats).map(([k,v])=>k+' '+v).join(' · ')+'</div></div>'+
+  '<input id=mq placeholder="search memory…" style="padding:11px;background:#060608;'+
+  'border:1px solid #1a1a2e;color:#fff;border-radius:6px">'+'<div id=mres></div>';
+ document.getElementById('mq').onkeydown=async ev=>{if(ev.key!='Enter')return;
+  const r=await fetch('/api/memory?q='+encodeURIComponent(ev.target.value));const j=await r.json();
+  document.getElementById('mres').innerHTML=j.hits.length?j.hits.map(h=>
+   '<div class=card><h4>'+h.title+'</h4><div class=meta>'+h.id+' · score '+h.score+
+   ' · '+h.updated+'</div><div style="margin-top:8px;color:#9aa">'+
+   h.snippet.replace(/</g,'&lt;')+'</div></div>').join(''):'<div class=card>no hits</div>'}}
+async function loadAppr(){const j=await(await fetch('/api/approvals')).json();
+ document.getElementById('p-appr').innerHTML=j.pending.length?j.pending.map(a=>
+  '<div class=card><h4>#'+a.id+' '+a.tool+'</h4><div class=meta>'+a.created+'</div>'+
+  '<div style="margin-top:8px;white-space:pre-wrap">'+a.summary.replace(/</g,'&lt;')+'</div>'+
+  '<div class=row><button onclick="decide('+a.id+',true)">Approve</button>'+
+  '<button class=no onclick="decide('+a.id+',false)">Deny</button></div></div>').join('')
+  :'<div class=card>nothing waiting</div>'}
+async function decide(id,ok){await fetch('/api/approvals/'+id,{method:'POST',
+ headers:{'Content-Type':'application/json'},body:JSON.stringify({approved:ok})});
+ loadAppr();poll()}
+async function loadCap(){const j=await(await fetch('/api/status')).json();
+ document.getElementById('p-cap').innerHTML='<div class=card><h4>integrations</h4>'+
+  Object.entries(j.capabilities).map(([k,v])=>'<div>'+(v?'🟢':'⚪')+' '+k+'</div>').join('')+
+  '</div><div class=card><h4>follow-ups</h4>'+(j.followups.length?j.followups.map(t=>
+  '<div class=meta>#'+t.id+' '+t.due+' — '+t.what+'</div>').join(''):'<div class=meta>none</div>')+
+  '</div><div class=card><h4>secrets stored</h4><div class=meta>'+
+  (j.secrets.join(', ')||'none')+'</div></div>'}
+async function poll(){const j=await(await fetch('/api/approvals')).json();
+ document.getElementById('badge').textContent=j.pending.length?'('+j.pending.length+')':'';
+ document.getElementById('hint').textContent=j.pending.length?'action needed':''}
+poll();setInterval(poll,20000);
 </script></body></html>"""
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
 
 @app.route("/")
 @login_required
 def index():
-    return render_template_string(DASH)
+    return UI
 
-@app.route("/api/jobs")
+
+# ─── API ──────────────────────────────────────────────────────────────────────
+
+@app.route("/api/chat", methods=["POST"])
 @login_required
-def api_jobs():
-    return jsonify(all_jobs())
-
-@app.route("/api/scan-status")
-@login_required
-def api_scan_status():
-    return jsonify(SCAN_STATUS)
-
-@app.route("/api/mark/<jid>", methods=["POST"])
-@login_required
-def api_mark(jid):
-    set_status(jid, request.get_json()["status"])
-    return jsonify({"ok": True})
-
-@app.route("/api/scan", methods=["POST"])
-@login_required
-def api_scan():
-    if SCAN_STATUS["running"]:
-        return jsonify({"ok": False, "msg": "Already scanning"})
-    def go():
-        SCAN_STATUS["running"] = True
-        SCAN_STATUS["last"] = datetime.now().strftime("%b %d %H:%M")
-        SCAN_STATUS["count"] = 0
-        try:
-            new, _ = run_scan()
-            SCAN_STATUS["count"] = new
-        except Exception as e:
-            log.error(f"Scan error: {e}")
-        finally:
-            SCAN_STATUS["running"] = False
-    threading.Thread(target=go, daemon=True).start()
-    return jsonify({"ok": True})
-
-# ─── Agent ────────────────────────────────────────────────────────────────────
-
-AGENT_UI = """<!DOCTYPE html><html><head><title>yuval.bot — agent</title><meta name=viewport content="width=device-width,initial-scale=1">
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#0a0a0f;color:#ddd;font:14px/1.6 'JetBrains Mono',ui-monospace,monospace;display:flex;flex-direction:column;height:100vh}
-header{padding:14px 18px;border-bottom:1px solid #1a1a2e;color:#00ff88;font-weight:700}
-header a{color:#444;float:right;text-decoration:none;font-weight:400}
-#log{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:14px}
-.m{max-width:760px;white-space:pre-wrap}
-.u{color:#fff;border-left:3px solid #00ff88;padding-left:10px}
-.a{color:#9aa;border-left:3px solid #1a1a2e;padding-left:10px}
-form{display:flex;gap:8px;padding:14px;border-top:1px solid #1a1a2e}
-input{flex:1;background:#060608;border:1px solid #1a1a2e;color:#fff;padding:11px 14px;border-radius:5px;font:inherit}
-button{background:#00ff88;color:#000;border:0;padding:0 20px;border-radius:5px;font:inherit;font-weight:700;cursor:pointer}
-</style></head><body>
-<header>YUVAL<span style="color:#fff">.BOT</span> — agent <a href="/">← jobs</a></header>
-<div id=log></div>
-<form id=f><input id=i placeholder="Talk to your agent…" autocomplete=off autofocus><button>Send</button></form>
-<script>
-const log=document.getElementById('log');
-function add(cls,txt){const d=document.createElement('div');d.className='m '+cls;d.textContent=txt;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
-document.getElementById('f').onsubmit=async e=>{e.preventDefault();
- const i=document.getElementById('i'),t=i.value.trim();if(!t)return;i.value='';add('u',t);
- const p=add('a','thinking…');
- try{const r=await fetch('/api/agent/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:t})});
-     const j=await r.json();p.textContent=j.reply||j.error||'(no reply)'}
- catch(err){p.textContent='error: '+err}};
-</script></body></html>"""
-
-@app.route("/agent")
-@login_required
-def agent_ui():
-    return AGENT_UI
-
-@app.route("/api/agent/chat", methods=["POST"])
-@login_required
-def api_agent_chat():
+def api_chat():
     msg = (request.get_json(silent=True) or {}).get("message", "").strip()
     if not msg:
         return jsonify({"error": "empty message"}), 400
     try:
         return jsonify({"reply": brain.run(msg, channel="web")})
     except Exception as e:
-        log.error(f"agent chat failed: {e}")
+        log.error(f"chat failed: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route("/api/agent/memory")
-@login_required
-def api_agent_memory():
-    q = request.args.get("q", "")
-    return jsonify({"stats": mem.stats(),
-                    "hits": mem.search(q) if q else []})
 
-@app.route("/api/agent/consolidate", methods=["POST"])
+@app.route("/api/memory")
 @login_required
-def api_agent_consolidate():
+def api_memory():
+    q = request.args.get("q", "")
+    return jsonify({"stats": memory.stats(), "hits": memory.search(q, limit=12) if q else []})
+
+
+@app.route("/api/memory/<path:rid>")
+@login_required
+def api_memory_read(rid):
+    rec = memory.read(rid)
+    return jsonify(rec or {"error": "not found"}), (200 if rec else 404)
+
+
+@app.route("/api/approvals")
+@login_required
+def api_approvals():
+    return jsonify({"pending": approvals.pending()})
+
+
+@app.route("/api/approvals/<int:aid>", methods=["POST"])
+@login_required
+def api_decide(aid):
+    ok = bool((request.get_json(silent=True) or {}).get("approved"))
+    return jsonify(approvals.decide(aid, ok))
+
+
+@app.route("/api/status")
+@login_required
+def api_status():
+    return jsonify({"capabilities": config.capabilities(),
+                    "memory": memory.stats(),
+                    "followups": tasks.pending(),
+                    "secrets": vault.names() if os.environ.get("VAULT_KEY") else []})
+
+
+@app.route("/api/secrets", methods=["POST"])
+@login_required
+def api_secrets():
+    d = request.get_json(silent=True) or {}
+    if not d.get("name") or not d.get("value"):
+        return jsonify({"error": "name and value required"}), 400
+    try:
+        return jsonify(vault.put(d["name"], d["value"]))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/consolidate", methods=["POST"])
+@login_required
+def api_consolidate():
     return jsonify(consolidate.run())
+
 
 @app.route("/webhook/whatsapp", methods=["POST"])
 def webhook_whatsapp():
-    """Twilio inbound WhatsApp → agent turn → TwiML reply."""
-    from agent.channels import verify_twilio
+    """Twilio inbound → agent turn → TwiML reply. The main front door."""
     if not verify_twilio(request.url, request.form.to_dict(),
                          request.headers.get("X-Twilio-Signature", "")):
         log.warning("rejected unsigned inbound webhook")
         return "forbidden", 403
     frm = (request.form.get("From") or "").replace("whatsapp:", "").strip()
     body = (request.form.get("Body") or "").strip()
-    allowed = os.environ.get("YOUR_PHONE", "").replace("whatsapp:", "").strip()
-    if allowed and frm != allowed:
-        log.warning(f"ignored inbound whatsapp from {frm}")
+    if config.OWNER_PHONE and frm != config.OWNER_PHONE:
+        log.warning(f"ignored inbound from {frm}")
         return "<Response/>", 200, {"Content-Type": "application/xml"}
     try:
         reply = brain.run(body, channel="whatsapp")
     except Exception as e:
         log.error(f"whatsapp turn failed: {e}")
         reply = "Something broke on my side — try again."
-    esc = (reply.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))[:1500]
-    return f"<Response><Message>{esc}</Message></Response>", 200, \
-        {"Content-Type": "application/xml"}
+    esc = reply.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return (f"<Response><Message>{esc[:1500]}</Message></Response>", 200,
+            {"Content-Type": "application/xml"})
+
 
 @app.route("/health")
 def health():
     return "OK", 200
 
 
-@app.route("/api/clear", methods=["POST"])
-@login_required
-def api_clear():
-    import sqlite3
-    from scanner import DB
-    con = sqlite3.connect(DB)
-    con.execute("DELETE FROM jobs")
-    con.commit()
-    con.close()
-    log.info("🗑 Database cleared by user")
-    return jsonify({"ok": True})
-
-# ─── Scheduler ────────────────────────────────────────────────────────────────
-
-def scheduled_scan():
-    if not SCAN_STATUS["running"]:
-        SCAN_STATUS["running"] = True
-        SCAN_STATUS["last"] = datetime.now().strftime("%b %d %H:%M")
-        try:
-            new, _ = run_scan()
-            SCAN_STATUS["count"] = new
-        except Exception as e:
-            log.error(f"Scheduled scan error: {e}")
-        finally:
-            SCAN_STATUS["running"] = False
+# ─── the clock ────────────────────────────────────────────────────────────────
 
 def agent_tick():
-    """Fire any due follow-ups — this is what makes the agent proactive."""
     try:
         done = brain.tick()
         if done:
             log.info(f"⏰ ran {len(done)} follow-up(s)")
     except Exception as e:
-        log.error(f"agent tick error: {e}")
+        log.error(f"tick error: {e}")
 
 
 def nightly_consolidation():
@@ -491,25 +281,34 @@ def nightly_consolidation():
         log.error(f"consolidation error: {e}")
 
 
+def morning_review():
+    try:
+        brain.daily_briefing()
+    except Exception as e:
+        log.error(f"daily briefing error: {e}")
+
+
 def start_scheduler():
-    hours = int(os.environ.get("SCAN_INTERVAL_HOURS", "4"))
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(scheduled_scan, "interval", hours=hours,
-                      id="scan", replace_existing=True)
-    scheduler.add_job(agent_tick, "interval",
-                      minutes=int(os.environ.get("AGENT_TICK_MINUTES", "5")),
-                      id="agent_tick", replace_existing=True)
-    scheduler.add_job(nightly_consolidation, "cron",
-                      hour=int(os.environ.get("CONSOLIDATE_HOUR_UTC", "3")),
-                      id="consolidate", replace_existing=True)
-    scheduler.start()
-    SCAN_STATUS["next"] = f"Every {hours}h"
-    log.info(f"⏱  Scheduler: every {hours} hours")
-    return scheduler
+    s = BackgroundScheduler(timezone="UTC")
+    s.add_job(agent_tick, "interval",
+              minutes=int(os.environ.get("AGENT_TICK_MINUTES", "5")),
+              id="tick", replace_existing=True)
+    s.add_job(nightly_consolidation, "cron",
+              hour=int(os.environ.get("CONSOLIDATE_HOUR_UTC", "3")),
+              id="consolidate", replace_existing=True)
+    if os.environ.get("DAILY_BRIEF", "1") == "1":
+        s.add_job(morning_review, "cron",
+                  hour=int(os.environ.get("BRIEF_HOUR_UTC", "5")),
+                  id="brief", replace_existing=True)
+    s.start()
+    log.info("⏱  scheduler: follow-ups every "
+             f"{os.environ.get('AGENT_TICK_MINUTES', '5')}m, nightly consolidation, "
+             "daily review")
+    return s
+
 
 _scheduler = start_scheduler()
 
-# ─── Local dev ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     log.info(f"🚀 http://localhost:{port}")

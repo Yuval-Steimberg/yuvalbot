@@ -1,9 +1,11 @@
-jobs.db
+agent.db
+memory/
+files/
+vault.enc
+browser_state.json
 *.log
 .venv/
 __pycache__/
 *.pyc
 .env
 .DS_Store
-agent.db
-memory/
