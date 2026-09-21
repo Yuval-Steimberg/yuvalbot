@@ -11,6 +11,8 @@ from functools import wraps
 from flask import Flask, render_template_string, jsonify, request, session, redirect
 from apscheduler.schedulers.background import BackgroundScheduler
 from scanner import init_db, all_jobs, set_status, run_scan
+import agent
+from agent import brain, consolidate, memory as mem
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -29,7 +31,8 @@ SCAN_STATUS = {"last": "Never", "running": False, "next": "–", "count": 0}
 
 # ── CRITICAL FIX: init DB at module level so gunicorn workers pick it up ──────
 init_db()
-log.info("✅ Database ready")
+agent.boot()
+log.info("✅ Database + memory ready")
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 def login_required(f):
@@ -358,6 +361,88 @@ def api_scan():
     threading.Thread(target=go, daemon=True).start()
     return jsonify({"ok": True})
 
+# ─── Agent ────────────────────────────────────────────────────────────────────
+
+AGENT_UI = """<!DOCTYPE html><html><head><title>yuval.bot — agent</title><meta name=viewport content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0f;color:#ddd;font:14px/1.6 'JetBrains Mono',ui-monospace,monospace;display:flex;flex-direction:column;height:100vh}
+header{padding:14px 18px;border-bottom:1px solid #1a1a2e;color:#00ff88;font-weight:700}
+header a{color:#444;float:right;text-decoration:none;font-weight:400}
+#log{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:14px}
+.m{max-width:760px;white-space:pre-wrap}
+.u{color:#fff;border-left:3px solid #00ff88;padding-left:10px}
+.a{color:#9aa;border-left:3px solid #1a1a2e;padding-left:10px}
+form{display:flex;gap:8px;padding:14px;border-top:1px solid #1a1a2e}
+input{flex:1;background:#060608;border:1px solid #1a1a2e;color:#fff;padding:11px 14px;border-radius:5px;font:inherit}
+button{background:#00ff88;color:#000;border:0;padding:0 20px;border-radius:5px;font:inherit;font-weight:700;cursor:pointer}
+</style></head><body>
+<header>YUVAL<span style="color:#fff">.BOT</span> — agent <a href="/">← jobs</a></header>
+<div id=log></div>
+<form id=f><input id=i placeholder="Talk to your agent…" autocomplete=off autofocus><button>Send</button></form>
+<script>
+const log=document.getElementById('log');
+function add(cls,txt){const d=document.createElement('div');d.className='m '+cls;d.textContent=txt;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
+document.getElementById('f').onsubmit=async e=>{e.preventDefault();
+ const i=document.getElementById('i'),t=i.value.trim();if(!t)return;i.value='';add('u',t);
+ const p=add('a','thinking…');
+ try{const r=await fetch('/api/agent/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:t})});
+     const j=await r.json();p.textContent=j.reply||j.error||'(no reply)'}
+ catch(err){p.textContent='error: '+err}};
+</script></body></html>"""
+
+@app.route("/agent")
+@login_required
+def agent_ui():
+    return AGENT_UI
+
+@app.route("/api/agent/chat", methods=["POST"])
+@login_required
+def api_agent_chat():
+    msg = (request.get_json(silent=True) or {}).get("message", "").strip()
+    if not msg:
+        return jsonify({"error": "empty message"}), 400
+    try:
+        return jsonify({"reply": brain.run(msg, channel="web")})
+    except Exception as e:
+        log.error(f"agent chat failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/agent/memory")
+@login_required
+def api_agent_memory():
+    q = request.args.get("q", "")
+    return jsonify({"stats": mem.stats(),
+                    "hits": mem.search(q) if q else []})
+
+@app.route("/api/agent/consolidate", methods=["POST"])
+@login_required
+def api_agent_consolidate():
+    return jsonify(consolidate.run())
+
+@app.route("/webhook/whatsapp", methods=["POST"])
+def webhook_whatsapp():
+    """Twilio inbound WhatsApp → agent turn → TwiML reply."""
+    from agent.channels import verify_twilio
+    if not verify_twilio(request.url, request.form.to_dict(),
+                         request.headers.get("X-Twilio-Signature", "")):
+        log.warning("rejected unsigned inbound webhook")
+        return "forbidden", 403
+    frm = (request.form.get("From") or "").replace("whatsapp:", "").strip()
+    body = (request.form.get("Body") or "").strip()
+    allowed = os.environ.get("YOUR_PHONE", "").replace("whatsapp:", "").strip()
+    if allowed and frm != allowed:
+        log.warning(f"ignored inbound whatsapp from {frm}")
+        return "<Response/>", 200, {"Content-Type": "application/xml"}
+    try:
+        reply = brain.run(body, channel="whatsapp")
+    except Exception as e:
+        log.error(f"whatsapp turn failed: {e}")
+        reply = "Something broke on my side — try again."
+    esc = (reply.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))[:1500]
+    return f"<Response><Message>{esc}</Message></Response>", 200, \
+        {"Content-Type": "application/xml"}
+
 @app.route("/health")
 def health():
     return "OK", 200
@@ -389,11 +474,34 @@ def scheduled_scan():
         finally:
             SCAN_STATUS["running"] = False
 
+def agent_tick():
+    """Fire any due follow-ups — this is what makes the agent proactive."""
+    try:
+        done = brain.tick()
+        if done:
+            log.info(f"⏰ ran {len(done)} follow-up(s)")
+    except Exception as e:
+        log.error(f"agent tick error: {e}")
+
+
+def nightly_consolidation():
+    try:
+        consolidate.run()
+    except Exception as e:
+        log.error(f"consolidation error: {e}")
+
+
 def start_scheduler():
     hours = int(os.environ.get("SCAN_INTERVAL_HOURS", "4"))
     scheduler = BackgroundScheduler()
     scheduler.add_job(scheduled_scan, "interval", hours=hours,
                       id="scan", replace_existing=True)
+    scheduler.add_job(agent_tick, "interval",
+                      minutes=int(os.environ.get("AGENT_TICK_MINUTES", "5")),
+                      id="agent_tick", replace_existing=True)
+    scheduler.add_job(nightly_consolidation, "cron",
+                      hour=int(os.environ.get("CONSOLIDATE_HOUR_UTC", "3")),
+                      id="consolidate", replace_existing=True)
     scheduler.start()
     SCAN_STATUS["next"] = f"Every {hours}h"
     log.info(f"⏱  Scheduler: every {hours} hours")
