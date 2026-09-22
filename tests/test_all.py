@@ -562,6 +562,37 @@ check("the prompt tries signing in before handing over a browser",
       "site_sign_in first" in brain.SYSTEM
       and "fallback, not the opener" in brain.SYSTEM)
 
+print("\nfinding the human, not asking for facts")
+from agent import contacts                                             # noqa: E402
+check("a display name and address are read apart",
+      contacts._parse('"Orit Ilan Fox" <orit.fox@poalim.co.il>')
+      == ("Orit Ilan Fox", "orit.fox@poalim.co.il"))
+_conf, _ids, _heads = google.configured, google.list_ids, google.headers_of
+google.configured = lambda: True
+google.list_ids = lambda q, p="", n=25: ({"ids": ["m1", "m2", "m3"]}
+                                         if "poalim" in q else {"ids": []})
+google.headers_of = lambda ids: [
+    {"from": '"Orit Ilan Fox" <orit.fox@poalim.co.il>', "to": "y@gmail.com",
+     "date": "2026-09-01", "subject": "העברה לחו״ל"},
+    {"from": '"Orit Ilan Fox" <orit.fox@poalim.co.il>', "to": "y@gmail.com",
+     "date": "2026-08-01", "subject": "עמלות"},
+    {"from": "noreply@poalim.co.il", "to": "y@gmail.com",
+     "date": "2026-07-01", "subject": "הודעה"}]
+found = contacts.find("poalim")
+check("the real banker outranks the no-reply address",
+      found["people"][0]["email"] == "orit.fox@poalim.co.il"
+      and found["people"][0]["name"] == "Orit Ilan Fox")
+check("their recent subjects come with them",
+      any("עמלות" in s_ or "חו״ל" in s_ for s_ in found["people"][0]["subjects"]))
+google.list_ids = lambda q, p="", n=25: {"ids": []}
+check("an empty mailbox says so instead of inventing someone",
+      contacts.find("nowhere")["people"] == [])
+google.configured, google.list_ids, google.headers_of = _conf, _ids, _heads
+check("the prompt forbids asking for what is in the inbox",
+      "statement about your memory, not about the world" in brain.SYSTEM)
+check("and says a request to somebody is an email, not a login",
+      "not a login" in brain.SYSTEM)
+
 print("\nself check")
 from agent import diagnose                                             # noqa: E402
 report = diagnose.run()

@@ -212,6 +212,17 @@ SCHEMAS = [
      "description": "Read a Drive file's text (Docs/Sheets/Slides are exported).",
      "input_schema": {"type": "object", "properties": {"file_id": {"type": "string"}},
                       "required": ["file_id"]}},
+    {"name": "find_contact",
+     "description": "Who at an organisation actually deals with the owner. "
+                    "Searches their mail for real people writing from that "
+                    "company and ranks them by how recently and often they "
+                    "corresponded. Use this before writing to any company — a "
+                    "named person beats info@.",
+     "input_schema": {"type": "object", "properties": {
+         "organisation": {"type": "string",
+                          "description": "e.g. 'bank hapoalim' or 'poalim.co.il'"},
+         "limit": {"type": "integer", "default": 5}},
+         "required": ["organisation"]}},
     {"name": "contacts_search",
      "description": "Look up one of the owner's Google Contacts — email, phone, org.",
      "input_schema": {"type": "object", "properties": {
@@ -634,6 +645,9 @@ def execute(name: str, args: dict) -> dict:
         return google.drive_search(args["query"], args.get("limit", 10))
     if name == "drive_read":
         return google.drive_read(args["file_id"])
+    if name == "find_contact":
+        from . import contacts
+        return contacts.find(args["organisation"], args.get("limit", 5))
     if name == "contacts_search":
         return google.contacts_search(args["query"], args.get("limit", 8))
 
