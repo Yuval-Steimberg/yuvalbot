@@ -392,8 +392,15 @@ def _composio_card() -> str:
 
     live = mcp.status().get("composio", {})
     if live and not live.get("error"):
-        tail = (f"<p class=note>🟢 The agent can use these: {live['tools']} tools "
-                f"live.</p><form method=POST action='/connect/composio/wire'>"
+        names = [t["name"].split("__", 2)[-1]
+                 for t in mcp.schemas() if t["name"].startswith("mcp__composio__")]
+        shown = ", ".join(n.lower().replace("composio_", "") for n in names[:8])
+        tail = (f"<p class=note>🟢 Live in the agent: {live['tools']} tools"
+                f"{' — ' + shown if shown else ''}.</p>"
+                f"<p class=note>Composio routes actions through a few meta-tools, so "
+                f"a small number here is normal — the agent searches them for the "
+                f"action it needs.</p>"
+                f"<form method=POST action='/connect/composio/wire'>"
                 f"<button class=ghost>Refresh tools</button></form>")
     else:
         tail = ("<p class=note>After connecting an app, press this once so the "
@@ -417,7 +424,7 @@ def _hosted_card() -> str:
     The cost is real — that service holds tokens to the mail.
     """
     hosted = {k: v for k, v in (store.get("mcp_servers", {}) or {}).items()
-              if v.get("hosted")}
+              if v.get("hosted") and not v.get("composio")}
     rows = "".join(f"<div class=note>🟢 <b>{k}</b> — {v.get('url', '')[:60]}…</div>"
                    for k, v in hosted.items())
     links = " · ".join(

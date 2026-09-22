@@ -266,19 +266,51 @@ def split(tool_name: str) -> tuple[str, str]:
     return server, tool
 
 
-def needs_approval(tool_name: str) -> bool:
+# Composio's tool router exposes a handful of meta-tools rather than one tool per
+# action: the real action arrives as an argument. Judging the wrapper name alone
+# would gate every read behind an approval, or worse, wave a write through.
+WRAPPERS = {"execute_tool", "composio_execute_tool", "execute", "call_tool",
+            "run_tool", "composio_multi_execute_tool"}
+INNER_KEYS = ("tool_slug", "tool_name", "toolSlug", "toolName", "slug", "action",
+              "tool", "name")
+
+
+def _inner_tool(args: dict) -> str:
+    for k in INNER_KEYS:
+        v = (args or {}).get(k)
+        if isinstance(v, str) and v:
+            return v
+        if isinstance(v, list) and v and isinstance(v[0], str):
+            return " ".join(v)                    # multi-execute takes a list
+        if isinstance(v, dict):
+            for kk in INNER_KEYS:
+                if isinstance(v.get(kk), str):
+                    return v[kk]
+    return ""
+
+
+def _classify(name: str) -> bool:
+    """True when this name should wait for a human."""
+    words = _tool_words(name)
+    if words & WRITE_WORDS:
+        return True
+    return not (words & READ_WORDS)
+
+
+def needs_approval(tool_name: str, args: dict | None = None) -> bool:
     """Reads run free; anything else waits for a human. The server does not get
-    a vote — 'trust' comes from your mcp.json."""
+    a vote — 'trust' comes from your config, never from the server."""
     server, tool = split(tool_name)
     s = servers().get(server)
     if not s:
         return True
     if s.trust == "read_only":
         return False
-    words = _tool_words(tool)
-    if words & WRITE_WORDS:
-        return True
-    return not (words & READ_WORDS)
+    if tool.lower() in WRAPPERS:
+        inner = _inner_tool(args or {})
+        # An unnamed action through a wrapper is the one case to be strict about.
+        return _classify(inner) if inner else True
+    return _classify(tool)
 
 
 def call(tool_name: str, args: dict) -> dict:

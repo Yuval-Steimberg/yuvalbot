@@ -341,7 +341,8 @@ def _expand(query: str) -> list[str]:
 def _summarize(name: str, args: dict) -> str:
     if mcp.is_mcp(name):
         server, tool = mcp.split(name)
-        return f"[{server}] {tool} — {json.dumps(args)[:400]}"
+        inner = mcp._inner_tool(args) if tool.lower() in mcp.WRAPPERS else ""
+        return f"[{server}] {inner or tool} — {json.dumps(args)[:400]}"
     if name in ("gmail_send",):
         return f"Email {args.get('to')} — “{args.get('subject')}”\n\n{args.get('body','')[:500]}"
     if name == "gmail_reply":
@@ -377,7 +378,7 @@ def _needs_approval(name: str, args: dict) -> bool:
         # An MCP write is gated even under AUTO_APPROVE: these are third-party
         # servers whose tool text the model reads, and money moves through some
         # of them.
-        return mcp.needs_approval(name)
+        return mcp.needs_approval(name, args)
     if config.AUTO_APPROVE:
         return False
     if name == "calendar_create_event":

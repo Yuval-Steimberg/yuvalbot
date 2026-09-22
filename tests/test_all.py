@@ -163,6 +163,16 @@ check("a hosted server that demands a session works",
       mcp.status().get("hosted", {}).get("tools") == 2, str(mcp.status()))
 check("its reads run free", not mcp.needs_approval("mcp__hosted__GMAIL_FETCH_EMAILS"))
 check("its writes are gated", mcp.needs_approval("mcp__hosted__GMAIL_SEND_EMAIL"))
+for inner, expect, label in (
+        ("GMAIL_FETCH_EMAILS", False, "a read routed through a wrapper runs free"),
+        ("GMAIL_SEND_EMAIL", True, "a write routed through a wrapper is gated"),
+        ("", True, "a wrapper naming no action is gated")):
+    args = {"tool_slug": inner} if inner else {}
+    check(label, mcp.needs_approval("mcp__hosted__COMPOSIO_EXECUTE_TOOL", args)
+          is expect)
+check("a nested action name is found too",
+      mcp.needs_approval("mcp__hosted__COMPOSIO_EXECUTE_TOOL",
+                         {"arguments": {"tool_name": "GMAIL_DELETE_MESSAGE"}}) is True)
 check("a tool call returns content",
       mcp.call("mcp__hosted__GMAIL_FETCH_EMAILS", {}).get("result") == "3 unread")
 srv.shutdown()
