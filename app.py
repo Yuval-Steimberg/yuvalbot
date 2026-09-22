@@ -264,8 +264,19 @@ def api_telegram():
     info = telegram.webhook_info() if token else {"error": "TELEGRAM_BOT_TOKEN not set"}
     hooked = (info.get("result") or {}).get("url", "")
     expected = f"{config.PUBLIC_URL}/webhook/telegram" if config.PUBLIC_URL else ""
+    raw = os.environ.get("PUBLIC_URL", "").strip()
+    railway = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
     if not token:
         verdict = "Set TELEGRAM_BOT_TOKEN (from @BotFather) and redeploy."
+    elif raw and config._placeholder(raw):
+        verdict = (f"PUBLIC_URL is the example placeholder ('{raw}') — it was "
+                   f"ignored. Delete the variable and redeploy; the domain is "
+                   f"derived automatically.")
+    elif raw and railway and railway not in raw:
+        verdict = (f"PUBLIC_URL ('{raw}') is not this deployment's domain "
+                   f"('{railway}'). Telegram is delivering your messages there, "
+                   f"not here. Delete PUBLIC_URL and redeploy unless you meant a "
+                   f"custom domain.")
     elif not config.PUBLIC_URL:
         verdict = ("No public URL. Generate a domain, or set PUBLIC_URL, "
                    "then redeploy.")

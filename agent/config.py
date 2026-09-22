@@ -22,6 +22,17 @@ DB_PATH = Path(os.environ.get("AGENT_DB", DATA_DIR / "agent.db"))
 FILES_DIR = Path(os.environ.get("FILES_DIR", DATA_DIR / "files"))
 VAULT_PATH = Path(os.environ.get("VAULT_PATH", DATA_DIR / "vault.enc"))
 BROWSER_STATE = Path(os.environ.get("BROWSER_STATE", DATA_DIR / "browser_state.json"))
+PLACEHOLDERS = ("your-app", "your-domain", "yourdomain", "example.com",
+                "<", "changeme", "my-app.up.railway.app")
+
+
+def _placeholder(value: str) -> bool:
+    """A copied-from-the-example value is worse than no value: it registers a
+    webhook against somebody else's domain and everything looks configured."""
+    low = value.lower()
+    return any(p in low for p in PLACEHOLDERS)
+
+
 def _public_url() -> str:
     """Where this deployment can be reached from the internet.
 
@@ -30,7 +41,7 @@ def _public_url() -> str:
     second variable — a step that silently leaves the bot deaf when skipped.
     """
     explicit = os.environ.get("PUBLIC_URL", "").strip().rstrip("/")
-    if explicit:
+    if explicit and not _placeholder(explicit):
         return explicit if explicit.startswith("http") else f"https://{explicit}"
     domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip().rstrip("/")
     return f"https://{domain}" if domain else ""
