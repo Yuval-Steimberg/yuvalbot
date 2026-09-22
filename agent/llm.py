@@ -22,12 +22,23 @@ def call(messages, system="", tools=None, model=None, max_tokens=4000, timeout=1
         payload["system"] = system
     if tools:
         payload["tools"] = tools
-    r = requests.post(API, headers={"x-api-key": key,
-                                    "anthropic-version": "2023-06-01",
-                                    "content-type": "application/json"},
-                      json=payload, timeout=timeout)
+    headers = {"x-api-key": key, "anthropic-version": "2023-06-01",
+               "content-type": "application/json"}
+    # An org-level key (not created inside a workspace) is rejected unless the
+    # request names the workspace to bill and scope it to.
+    workspace = os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
+    if workspace:
+        headers["anthropic-workspace-id"] = workspace
+
+    r = requests.post(API, headers=headers, json=payload, timeout=timeout)
     if r.status_code != 200:
-        raise LLMError(f"{r.status_code}: {r.text[:400]}")
+        detail = r.text[:400]
+        if "anthropic-workspace-id" in detail:
+            detail += ("  →  This key is not scoped to a workspace. Either create "
+                       "a new key inside a workspace in the Anthropic Console, or "
+                       "set ANTHROPIC_WORKSPACE_ID (Console > Settings > "
+                       "Workspaces, an id like wrkspc_...).")
+        raise LLMError(f"{r.status_code}: {detail}")
     return r.json()
 
 

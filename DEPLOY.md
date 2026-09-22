@@ -156,6 +156,7 @@ Message the bot, in this order:
 
 | symptom | cause |
 |---|---|
+| `This API key is not scoped to a workspace` | the key is an org-level key. Make a new key inside a workspace, or set `ANTHROPIC_WORKSPACE_ID` |
 | bot replies "Broke on my side: ..." | that line names the failure. `/api/selftest` isolates it further: model call, tool schemas, memory write, database |
 | `persistent_storage: false` | volume not mounted at `DATA_DIR` |
 | bot silent | open `/api/telegram` — it names the cause and what to do. On Railway the public URL is derived from `RAILWAY_PUBLIC_DOMAIN`, so it only breaks if no domain is generated |
