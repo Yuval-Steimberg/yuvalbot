@@ -93,6 +93,25 @@ def capabilities() -> dict:
     }
 
 
+# What each capability actually needs, so the agent can name the missing piece
+# instead of speculating about dashboards and integrations it does not have.
+REQUIREMENTS = {
+    "llm": "ANTHROPIC_API_KEY",
+    "whatsapp": "TWILIO_SID + TWILIO_TOKEN + YOUR_PHONE",
+    "telegram": "TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID",
+    "email_out": "RESEND_API_KEY + EMAIL_TO",
+    "gmail": "GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET + GOOGLE_REFRESH_TOKEN "
+             "(run scripts/google_setup.py)",
+    "calendar": "the same three GOOGLE_* variables as gmail",
+    "drive": "the same three GOOGLE_* variables as gmail",
+    "contacts": "the same three GOOGLE_* variables as gmail",
+    "browser": "the playwright package in the image",
+    "vault": "VAULT_KEY",
+    "web_search": "BRAVE_API_KEY or SERPER_API_KEY (falls back to DuckDuckGo)",
+    "persistent_storage": "a volume mounted at DATA_DIR",
+}
+
+
 def missing_summary() -> str:
     caps = capabilities()
     off = [k for k, v in caps.items() if not v]

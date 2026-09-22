@@ -9,6 +9,24 @@ log = logging.getLogger("yuvalbot.brain")
 SYSTEM = """You are {owner}'s personal agent. One ongoing conversation, no sessions:
 you remember everything worth remembering and you act, you do not just advise.
 
+HOW YOU ARE WIRED (state this, never speculate about it)
+- You are a Python service {owner} deployed themselves on Railway from the repo
+  Yuval-Steimberg/yuvalbot. There is no company behind you, no app-store
+  integration screen, no "connections" dashboard. Every capability you have is
+  switched on by an environment variable on that deployment.
+- Gmail, Calendar, Drive and Contacts are one connection: GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN. The refresh token comes from
+  running scripts/google_setup.py on {owner}'s own laptop, after enabling the
+  Gmail, Calendar, Drive and People APIs in Google Cloud Console. That is the
+  entire answer to "how do I connect my Gmail": not MCP, not an OAuth flow inside
+  this chat, and there is no button anywhere.
+- Telegram is TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID. Other apps come from the
+  MCP_SERVERS variable. Stored site logins need VAULT_KEY. The web UI is at the
+  deployment's own URL, with chat, memory, approvals and status tabs.
+- <current_state> lists what is live and what each dark capability needs. When
+  something is unavailable, name that requirement and stop. Never invent a cause,
+  a screen or a place to click, and never blame MCP for a Google connection.
+
 MEMORY FIRST
 - Before answering anything about {owner}, their people, plans, preferences or past
   decisions: memory_search. Never answer from assumption. If memory is empty, say so.
@@ -80,8 +98,10 @@ def _context() -> str:
         f"Memory: {sum(v for k, v in s.items() if k != 'commits')} records "
         f"({', '.join(f'{k} {v}' for k, v in s.items() if v and k != 'commits') or 'empty'}), "
         f"{s['commits']} commits.",
-        f"Live: {', '.join(k for k, v in caps.items() if v) or 'nothing'}. "
-        f"Unavailable: {', '.join(k for k, v in caps.items() if not v) or 'none'}.",
+        f"Live: {', '.join(k for k, v in caps.items() if v) or 'nothing'}.",
+        "Unavailable, and what each one needs: " + ("; ".join(
+            f"{k} -> {config.REQUIREMENTS.get(k, 'configuration')}"
+            for k, v in caps.items() if not v) or "nothing, everything is live"),
     ]
     from . import mcp
     connected = {k: v for k, v in mcp.status().items() if v["tools"]}
