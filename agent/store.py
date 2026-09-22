@@ -13,14 +13,28 @@ from . import config
 log = logging.getLogger("yuvalbot.store")
 
 
-def _fernet():
+def _derive(raw: str):
     from cryptography.fernet import Fernet
-    raw = os.environ.get("VAULT_KEY") or os.environ.get("SECRET_KEY") or ""
-    if not raw:
-        raise RuntimeError("set VAULT_KEY or SECRET_KEY before storing credentials")
     key = raw if len(raw) == 44 else base64.urlsafe_b64encode(
         hashlib.sha256(raw.encode()).digest()).decode()
     return Fernet(key.encode())
+
+
+def _keys() -> list:
+    """Every key this deployment might have encrypted with, newest first.
+
+    Adding VAULT_KEY later must not orphan everything written under SECRET_KEY:
+    that silently looks exactly like "nothing was ever connected".
+    """
+    raws = [os.environ.get("VAULT_KEY", ""), os.environ.get("SECRET_KEY", "")]
+    return [_derive(r) for r in raws if r]
+
+
+def _fernet():
+    keys = _keys()
+    if not keys:
+        raise RuntimeError("set VAULT_KEY or SECRET_KEY before storing credentials")
+    return keys[0]
 
 
 def _con():
@@ -51,7 +65,16 @@ def get(key: str, default=None):
             row = con.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
         if not row:
             return default
-        return json.loads(_fernet().decrypt(row["value"]).decode())
+        last = None
+        for f in _keys():
+            try:
+                return json.loads(f.decrypt(row["value"]).decode())
+            except Exception as e:
+                last = e
+        log.error(f"'{key}' is stored but cannot be decrypted with the current "
+                  f"VAULT_KEY/SECRET_KEY ({last}) — changing either key orphans "
+                  f"everything saved under the old one")
+        return default
     except RuntimeError:
         return default            # no key configured yet: nothing is stored either
     except Exception as e:
@@ -63,6 +86,22 @@ def delete(key: str) -> dict:
     with _con() as con:
         con.execute("DELETE FROM settings WHERE key=?", (key,))
     return {"deleted": key}
+
+
+def health() -> dict:
+    """Are stored settings actually readable? A key change makes them vanish."""
+    try:
+        with _con() as con:
+            rows = [r["key"] for r in con.execute("SELECT key FROM settings")]
+    except Exception as e:
+        return {"ok": False, "rows": 0, "detail": str(e)[:200]}
+    if not rows:
+        return {"ok": True, "rows": 0, "detail": "nothing stored yet"}
+    readable = sum(1 for k in rows if get(k, None) is not None)
+    return {"ok": readable > 0, "rows": len(rows), "readable": readable,
+            "detail": (f"{readable}/{len(rows)} readable" if readable else
+                       "stored settings cannot be decrypted — VAULT_KEY or "
+                       "SECRET_KEY changed since they were saved")}
 
 
 def keys() -> list[str]:

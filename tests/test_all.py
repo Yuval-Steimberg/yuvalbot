@@ -301,6 +301,20 @@ fake.shutdown()
 store.put("mcp_servers", {})
 mcp.reload()
 
+print("\nsaved settings survive a key change")
+import importlib                                                       # noqa: E402
+store.put("composio_api_key", "ak_live")
+os.environ["VAULT_KEY"] = "a-vault-key-added-later"
+importlib.reload(store)
+check("a key added later does not orphan what was saved",
+      store.get("composio_api_key") == "ak_live")
+check("the store reports itself readable", store.health()["ok"])
+store.put("after", "x")
+check("new writes use the new key and old ones still read",
+      store.get("after") == "x" and store.get("composio_api_key") == "ak_live")
+del os.environ["VAULT_KEY"]
+importlib.reload(store)
+
 print("\nconnecting things")
 import app as webapp                                                    # noqa: E402
 c = webapp.app.test_client()

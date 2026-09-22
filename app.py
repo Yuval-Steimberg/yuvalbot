@@ -791,6 +791,8 @@ def api_ready():
     checks["apps"] = {"ok": True,
                       "detail": ", ".join(f"{k} ({v['tools']} tools)"
                                           for k, v in servers.items()) or "none linked"}
+    st = store.health()
+    checks["saved_settings"] = {"ok": st["ok"], "detail": st["detail"]}
     checks["approvals"] = {"ok": not config.AUTO_APPROVE,
                            "detail": "gate on" if not config.AUTO_APPROVE
                                      else "AUTO_APPROVE=1 — nothing will ask first"}
