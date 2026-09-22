@@ -5,7 +5,7 @@ message templates, no sandbox that expires every three days. The agent can text
 you first, at 3am, for free.
 """
 
-import os, logging, requests
+import os, re, logging, requests
 
 log = logging.getLogger("yuvalbot.telegram")
 
@@ -44,16 +44,46 @@ def _api(method: str, **payload):
         return {"ok": False, "error": str(e)}
 
 
+def to_html(text: str) -> str:
+    """Markdown the model writes -> the small HTML subset Telegram renders.
+
+    Raw asterisks are worse than no formatting at all, and in a right-to-left
+    message they wreck the line order as well.
+    """
+    import html as _html
+    out = _html.escape(text or "")
+    out = re.sub(r"^#{1,6}\s*(.+)$", r"<b>\1</b>", out, flags=re.M)   # headings
+    out = re.sub(r"\*\*\*(.+?)\*\*\*", r"<b><i>\1</i></b>", out, flags=re.S)
+    out = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", out, flags=re.S)
+    out = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"<i>\1</i>", out,
+                 flags=re.S)
+    out = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", out)
+    out = re.sub(r"^\s*[-*]\s+", "• ", out, flags=re.M)               # bullets
+    return out
+
+
+def strip_markdown(text: str) -> str:
+    out = re.sub(r"^#{1,6}\s*", "", text or "", flags=re.M)
+    out = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", out, flags=re.S)
+    out = re.sub(r"`([^`\n]+)`", r"\1", out)
+    return re.sub(r"^\s*[-*]\s+", "• ", out, flags=re.M)
+
+
 def send(text: str, chat: str | None = None) -> dict:
     target = chat or chat_id()
     if not target:
         return {"ok": False, "error": "Telegram is not linked yet"}
     # Telegram caps a message at 4096 chars; split rather than truncate.
-    chunks = [text[i:i + 3900] for i in range(0, len(text) or 1, 3900)] or [""]
+    chunks = [text[i:i + 3500] for i in range(0, len(text) or 1, 3500)] or [""]
     out = {}
     for c in chunks:
-        out = _api("sendMessage", chat_id=target, text=c,
-                   disable_web_page_preview=True)
+        out = _api("sendMessage", chat_id=target, text=to_html(c),
+                   parse_mode="HTML", disable_web_page_preview=True)
+        if not out.get("ok"):
+            # Bad markup must never cost the message: resend it as plain text.
+            log.warning(f"HTML send rejected, falling back: {str(out)[:160]}")
+            out = _api("sendMessage", chat_id=target, text=strip_markdown(c),
+                       disable_web_page_preview=True)
     return {"ok": bool(out.get("ok")), "chunks": len(chunks)}
 
 

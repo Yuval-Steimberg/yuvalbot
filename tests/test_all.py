@@ -202,6 +202,16 @@ c.post("/webhook/telegram", json={"update_id": 100, "message": {
 time.sleep(0.5)
 check("a photo reaches the model as an image", captured.get("images") is True)
 
+print("\nchat formatting")
+from agent.telegram import to_html, strip_markdown
+messy = "**כותרת** with <b>raw</b> & *emphasis*\n- item\n# Heading\n`code`"
+html = to_html(messy)
+check("no raw asterisks reach the chat", "*" not in html, html)
+check("user angle brackets are escaped", "&lt;b&gt;raw&lt;/b&gt;" in html)
+check("bold and bullets convert", "<b>כותרת</b>" in html and "• item" in html)
+check("plain fallback strips everything", "*" not in strip_markdown(messy)
+      and "#" not in strip_markdown(messy))
+
 print("\nshape of the toolset")
 bad = [t["name"] for t in tools.SCHEMAS
        if not t.get("description") or t["input_schema"].get("type") != "object"]
