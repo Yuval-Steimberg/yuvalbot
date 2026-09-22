@@ -116,7 +116,27 @@ Built-in kinds: `gmail_triage` (empty the inbox of bulk mail), `gmail_subscripti
 other multi-hour goal, where each slice is one agent turn carrying notes from the
 last, until it answers `DONE:`.
 
-### 5. Approvals — the brake
+### 5. Errands — threads, drafts, paperwork, and chasing
+
+Most real admin is not a question, it is a thread: something was sent months ago,
+the confirmation never came, and the document you need is an attachment nobody
+kept. The agent works that shape.
+
+* **Reads the whole thread** (`gmail_thread`) rather than a snippet, and is told
+  to name what is *missing* — the cancellation that was requested but never
+  confirmed — because that is usually the point.
+* **Drafts, it does not send.** `gmail_draft_reply` writes inside the existing
+  thread so the other side keeps the history, and hands you a
+  `mail.google.com/#drafts/…` link to read and edit. Sending is a separate,
+  approval-gated step.
+* **Opens the paperwork**: `gmail_attachments` → `gmail_save_attachment` →
+  `read_document` (PDF, docx, text). A scan with no text layer is reported as a
+  scan, not guessed at.
+* **Chases**: `watch_thread` polls a thread every 20 minutes and messages you the
+  moment the other side answers, quoting their reply, then writes it into
+  `communications/`. If nobody replies in two weeks it asks whether to chase.
+
+### 6. Approvals — the brake
 
 Sending mail to a third party, inviting people to an event, driving a form on a
 website, running a shell command: the tool call returns `awaiting_approval`

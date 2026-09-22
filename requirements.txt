@@ -5,3 +5,4 @@ requests>=2.31.0
 cryptography>=42.0.0
 # optional — real browser control (browser_read / browser_act)
 playwright>=1.44.0
+pypdf>=4.2.0

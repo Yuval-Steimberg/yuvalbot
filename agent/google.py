@@ -329,3 +329,105 @@ def drive_page(page_token: str = "", page_size: int = 200,
 def drive_trash(file_id: str) -> dict:
     _api("PATCH", f"{DRIVE}/files/{file_id}", json={"trashed": True})
     return {"trashed": file_id}
+
+
+# ─── threads, drafts, attachments ─────────────────────────────────────────────
+# What a real errand needs: read the whole correspondence, write into it, keep
+# the paperwork. A draft is the unit that matters — it is reviewable before it
+# is irreversible.
+
+def thread(thread_id: str, max_chars: int = 3000) -> dict:
+    d = _api("GET", f"{GM}/threads/{thread_id}", params={"format": "full"})
+    msgs = []
+    for m in d.get("messages", []):
+        p = m.get("payload", {})
+        msgs.append({"id": m["id"], "from": _header(p, "from"), "to": _header(p, "to"),
+                     "subject": _header(p, "subject"), "date": _header(p, "date"),
+                     "message_id_header": _header(p, "message-id"),
+                     "labels": m.get("labelIds", []),
+                     "attachments": [{"filename": a["filename"],
+                                      "attachment_id": a["body"].get("attachmentId"),
+                                      "size": a["body"].get("size"),
+                                      "mime": a.get("mimeType")}
+                                     for a in _parts(p) if a.get("filename")],
+                     "body": re.sub(r"\s{2,}", " ", _body_text(p))[:max_chars]})
+    return {"thread_id": thread_id, "count": len(msgs), "messages": msgs}
+
+
+def _parts(payload) -> list:
+    out = [payload]
+    for p in payload.get("parts", []):
+        out += _parts(p)
+    return out
+
+
+def create_draft(to: str, subject: str, body: str, thread_id: str | None = None,
+                 in_reply_to: str | None = None) -> dict:
+    """Write the email but do not send it. Returns a link you can open in Gmail."""
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["To"], msg["Subject"] = to, subject
+    if in_reply_to:
+        msg["In-Reply-To"] = msg["References"] = in_reply_to
+    payload = {"message": {"raw": base64.urlsafe_b64encode(msg.as_bytes()).decode()}}
+    if thread_id:
+        payload["message"]["threadId"] = thread_id
+    d = _api("POST", f"{GM}/drafts", json=payload)
+    mid = (d.get("message") or {}).get("id", "")
+    log.info(f"📝 draft saved for {to}: {subject[:60]}")
+    return {"draft_id": d.get("id"), "message_id": mid, "to": to, "subject": subject,
+            "link": f"https://mail.google.com/mail/u/0/#drafts/{mid}" if mid else "",
+            "body_preview": body[:600]}
+
+
+def reply_draft(message_id: str, body: str) -> dict:
+    """Draft a reply inside the thread a message belongs to."""
+    d = _api("GET", f"{GM}/messages/{message_id}", params={"format": "metadata"})
+    p = d.get("payload", {})
+    subj = _header(p, "subject")
+    return create_draft(_header(p, "reply-to") or _header(p, "from"),
+                        subj if subj.lower().startswith("re:") else f"Re: {subj}",
+                        body, thread_id=d.get("threadId"),
+                        in_reply_to=_header(p, "message-id"))
+
+
+def send_draft(draft_id: str) -> dict:
+    d = _api("POST", f"{GM}/drafts/send", json={"id": draft_id})
+    log.info(f"📧 draft {draft_id} sent")
+    return {"sent": True, "id": d.get("id"), "thread_id": d.get("threadId")}
+
+
+def list_drafts(limit: int = 10) -> dict:
+    d = _api("GET", f"{GM}/drafts", params={"maxResults": limit})
+    out = []
+    for item in d.get("drafts", []):
+        m = _api("GET", f"{GM}/messages/{item['message']['id']}",
+                 params={"format": "metadata"})
+        p = m.get("payload", {})
+        out.append({"draft_id": item["id"], "message_id": item["message"]["id"],
+                    "to": _header(p, "to"), "subject": _header(p, "subject"),
+                    "snippet": m.get("snippet", "")[:200],
+                    "link": f"https://mail.google.com/mail/u/0/#drafts/{item['message']['id']}"})
+    return {"drafts": out}
+
+
+def attachments(message_id: str) -> dict:
+    d = _api("GET", f"{GM}/messages/{message_id}", params={"format": "full"})
+    p = d.get("payload", {})
+    return {"message_id": message_id, "subject": _header(p, "subject"),
+            "attachments": [{"filename": a["filename"],
+                             "attachment_id": a["body"].get("attachmentId"),
+                             "size": a["body"].get("size"), "mime": a.get("mimeType")}
+                            for a in _parts(p) if a.get("filename")]}
+
+
+def download_attachment(message_id: str, attachment_id: str, filename: str,
+                        directory) -> dict:
+    from pathlib import Path
+    d = _api("GET", f"{GM}/messages/{message_id}/attachments/{attachment_id}")
+    raw = base64.urlsafe_b64decode(d["data"] + "==")
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / Path(filename).name
+    path.write_bytes(raw)
+    log.info(f"📎 saved {path.name} ({len(raw)} bytes)")
+    return {"saved": str(path), "bytes": len(raw), "filename": path.name}

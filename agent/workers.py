@@ -220,6 +220,53 @@ def gmail_purge(job, params, state):
                        if done else None}
 
 
+# ─── waiting on someone else to reply ─────────────────────────────────────────
+
+def thread_watch(job, params, state):
+    """Watch one mail thread and speak up when the other side answers.
+
+    Half of an errand is waiting: you send the insurer a form and then nothing
+    happens for a week. The job polls the thread, ignores the owner's own
+    messages, and reports the moment a reply lands.
+    """
+    from . import jobs
+    thread_id = params["thread_id"]
+    mine = (params.get("my_address") or config.OWNER_EMAIL or "").lower()
+    every = int(params.get("check_minutes", 20))
+    give_up_days = int(params.get("max_days", 14))
+
+    state.setdefault("seen", [])
+    state.setdefault("checks", 0)
+    state["checks"] += 1
+
+    data = google.thread(thread_id, max_chars=1500)
+    if not state["seen"]:                       # first look: everything is old news
+        state["seen"] = [m["id"] for m in data["messages"]]
+        return {"state": state, "done": False, "next_run_at": jobs._in(minutes=every),
+                "progress": f"watching {data['count']} messages"}
+
+    fresh = [m for m in data["messages"]
+             if m["id"] not in state["seen"] and mine not in (m["from"] or "").lower()]
+    state["seen"] = [m["id"] for m in data["messages"]]
+
+    if fresh:
+        m = fresh[-1]
+        memory.write("communications", params.get("title") or f"Thread {thread_id}",
+                     f"Reply received {m['date']} from {m['from']}: {m['body'][:600]}",
+                     aliases=params.get("aliases") or [], mode="append")
+        return {"state": state, "done": True,
+                "summary": f"They answered. {m['from']} — {m['subject']}\n\n"
+                           f"{m['body'][:700]}"}
+
+    if state["checks"] * every > give_up_days * 24 * 60:
+        return {"state": state, "done": True,
+                "summary": f"No reply in {give_up_days} days on '{params.get('title') or thread_id}'. "
+                           f"Want me to chase them?"}
+
+    return {"state": state, "done": False, "next_run_at": jobs._in(minutes=every),
+            "progress": f"no reply yet ({state['checks']} checks)"}
+
+
 # ─── anything else: the agent working on its own over hours ───────────────────
 
 def agent_task(job, params, state):
@@ -257,6 +304,7 @@ def agent_task(job, params, state):
 
 
 HANDLERS = {
+    "thread_watch": thread_watch,
     "gmail_triage": gmail_triage,
     "gmail_subscriptions": gmail_subscriptions,
     "gmail_purge": gmail_purge,

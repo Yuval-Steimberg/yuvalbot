@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import (memory, tasks, channels, llm, web, browser, google, vault,
-               approvals, config, mcp, jobs, workers)
+               approvals, config, mcp, jobs, workers, docs)
 
 log = logging.getLogger("yuvalbot.tools")
 
@@ -88,6 +88,62 @@ SCHEMAS = [
      "input_schema": {"type": "object", "properties": {
          "message_id": {"type": "string"}, "body": {"type": "string"}},
          "required": ["message_id", "body"]}},
+    {"name": "gmail_thread",
+     "description": "Read an entire mail thread — every message, dates, and what "
+                    "attachments each carries. Use this before answering anything "
+                    "about an ongoing matter: the gap in a thread (no confirmation, "
+                    "no reply) is usually the thing that matters.",
+     "input_schema": {"type": "object", "properties": {
+         "thread_id": {"type": "string"}}, "required": ["thread_id"]}},
+    {"name": "gmail_draft",
+     "description": "Write an email and SAVE IT AS A DRAFT without sending. This is "
+                    "the default way to write mail for the owner: returns a Gmail "
+                    "link they can open, edit and send themselves.",
+     "input_schema": {"type": "object", "properties": {
+         "to": {"type": "string"}, "subject": {"type": "string"},
+         "body": {"type": "string"}}, "required": ["to", "subject", "body"]}},
+    {"name": "gmail_draft_reply",
+     "description": "Draft a reply inside the existing thread of a message, so the "
+                    "other side already has all the earlier context. Preferred over "
+                    "starting a new email about an ongoing matter.",
+     "input_schema": {"type": "object", "properties": {
+         "message_id": {"type": "string"}, "body": {"type": "string"}},
+         "required": ["message_id", "body"]}},
+    {"name": "gmail_send_draft",
+     "description": "Send a draft the owner has approved. Needs approval.",
+     "input_schema": {"type": "object", "properties": {
+         "draft_id": {"type": "string"}}, "required": ["draft_id"]}},
+    {"name": "gmail_drafts", "description": "List saved drafts with their links.",
+     "input_schema": {"type": "object", "properties": {
+         "limit": {"type": "integer", "default": 10}}}},
+    {"name": "gmail_attachments",
+     "description": "What files are attached to a message.",
+     "input_schema": {"type": "object", "properties": {
+         "message_id": {"type": "string"}}, "required": ["message_id"]}},
+    {"name": "gmail_save_attachment",
+     "description": "Download an attachment so you can read it with read_document.",
+     "input_schema": {"type": "object", "properties": {
+         "message_id": {"type": "string"}, "attachment_id": {"type": "string"},
+         "filename": {"type": "string"}},
+         "required": ["message_id", "attachment_id", "filename"]}},
+    {"name": "read_document",
+     "description": "Extract the text of a saved PDF, docx or text file — policy "
+                    "documents, forms, statements. Say so plainly if it is a scan "
+                    "with no text layer.",
+     "input_schema": {"type": "object", "properties": {
+         "name": {"type": "string", "description": "file name in the agent's files dir, "
+                                                   "or a full path"}},
+         "required": ["name"]}},
+    {"name": "watch_thread",
+     "description": "Watch a mail thread and tell the owner the moment the other "
+                    "side replies. Use whenever you send or draft something that "
+                    "needs an answer — that is how a request stops being forgotten.",
+     "input_schema": {"type": "object", "properties": {
+         "thread_id": {"type": "string"},
+         "title": {"type": "string", "description": "what this is about, for the report"},
+         "check_minutes": {"type": "integer", "default": 20},
+         "max_days": {"type": "integer", "default": 14}},
+         "required": ["thread_id"]}},
     {"name": "gmail_archive",
      "description": "Archive a message (remove INBOX label).",
      "input_schema": {"type": "object", "properties": {"message_id": {"type": "string"}},
@@ -268,6 +324,14 @@ def _summarize(name: str, args: dict) -> str:
         return f"Email {args.get('to')} — “{args.get('subject')}”\n\n{args.get('body','')[:500]}"
     if name == "gmail_reply":
         return f"Reply to message {args.get('message_id')}:\n\n{args.get('body','')[:500]}"
+    if name == "gmail_send_draft":
+        try:
+            d = next((x for x in google.list_drafts(20)["drafts"]
+                      if x["draft_id"] == args.get("draft_id")), None)
+        except Exception:
+            d = None
+        return (f"Send the draft to {d['to']} — “{d['subject']}”\n{d['snippet']}"
+                if d else f"Send draft {args.get('draft_id')}")
     if name == "calendar_create_event":
         who = ", ".join(args.get("attendees") or []) or "no guests"
         return f"Create event “{args.get('summary')}” {args.get('start')} → {args.get('end')} ({who})"
@@ -357,6 +421,31 @@ def execute(name: str, args: dict) -> dict:
         return google.send(args["to"], args["subject"], args["body"])
     if name == "gmail_reply":
         return google.reply(args["message_id"], args["body"])
+    if name == "gmail_thread":
+        return google.thread(args["thread_id"])
+    if name == "gmail_draft":
+        return google.create_draft(args["to"], args["subject"], args["body"])
+    if name == "gmail_draft_reply":
+        return google.reply_draft(args["message_id"], args["body"])
+    if name == "gmail_send_draft":
+        return google.send_draft(args["draft_id"])
+    if name == "gmail_drafts":
+        return google.list_drafts(args.get("limit", 10))
+    if name == "gmail_attachments":
+        return google.attachments(args["message_id"])
+    if name == "gmail_save_attachment":
+        return google.download_attachment(args["message_id"], args["attachment_id"],
+                                          args["filename"], config.FILES_DIR)
+    if name == "read_document":
+        n = args["name"]
+        path = n if "/" in n else str(config.FILES_DIR / n)
+        return docs.read(path)
+    if name == "watch_thread":
+        return jobs.start("thread_watch", params={
+            "thread_id": args["thread_id"], "title": args.get("title", ""),
+            "check_minutes": args.get("check_minutes", 20),
+            "max_days": args.get("max_days", 14)})
+
     if name == "gmail_archive":
         return google.modify(args["message_id"], remove=["INBOX"])
     if name == "calendar_events":
