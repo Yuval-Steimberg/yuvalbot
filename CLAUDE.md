@@ -25,6 +25,8 @@ agent/
   telegram.py channels.py web.py browser.py vault.py llm.py config.py cli.py
 scripts/google_setup.py   mints GOOGLE_REFRESH_TOKEN (loopback OAuth)
 DEPLOY.md           the Railway walkthrough — keep it in step with reality
+CONNECT.md          how a person connects each service, all browser steps
+tests/test_all.py   35 end-to-end checks, everything external stubbed
 ```
 
 ## Rules this codebase holds itself to
@@ -79,6 +81,10 @@ DEPLOY.md           the Railway walkthrough — keep it in step with reality
   apps from a catalog. A terminal is never the only route.
 * **Credentials resolve environment-first, then the encrypted store**, so a
   browser connection never silently overrides what an operator set explicitly.
+* **Text handling is unicode, not ASCII.** The owner writes Hebrew; an ASCII
+  tokenizer makes search silently return nothing.
+* **Scheduled loops call `tasks.beat()`**, so `/api/ready` can tell a dead
+  scheduler from an idle one.
 * Every capability degrades honestly: missing credentials disable a tool and are
   reported in `config.capabilities()`, never crash a turn.
 * Prompt changes live in `brain.SYSTEM`. It is the product as much as the code is.
@@ -87,9 +93,13 @@ DEPLOY.md           the Railway walkthrough — keep it in step with reality
 
 ## State of play (2026-09-22)
 
-Verified by stub: the agent loop, approval gate end to end, MCP round trip,
-job runner under a simulated daily-quota interruption, drive dedupe keeping the
-newest copy, thread watching, draft→approve→send, PDF reading.
+`python tests/test_all.py` — 35 checks covering memory (including Hebrew), due
+dates, reminder delivery, approvals, jobs under a daily quota, drive dedupe,
+drafts, thread watching, hosted MCP with session ids, the connect flows and
+photo/document intake. Keep it passing.
+
+Live in production: deployed on Railway, Telegram linked, memory and the volume
+confirmed working. Not yet connected there: Google.
 
 Boot itself is now verified for real: `start.sh` -> gunicorn -> `/health`
 returning ok. **Still never run against live credentials.** First real use
