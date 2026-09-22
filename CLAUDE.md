@@ -54,6 +54,9 @@ DEPLOY.md           the Railway walkthrough — keep it in step with reality
 
 ## Conventions
 
+* **The start command is `start.sh`, never an inline `$PORT`.** Railway runs the
+  start command without a shell, so an unexpanded `$PORT` reaches gunicorn as a
+  literal string and the container crash-loops. The script expands it itself.
 * **The Dockerfile stays plain ASCII and declares no `VOLUME`** — Railway manages
   the volume and rejects Dockerfiles that declare one. `nixpacks.toml` is the
   fallback builder (no Chromium, no npx MCP servers).
@@ -72,7 +75,8 @@ Verified by stub: the agent loop, approval gate end to end, MCP round trip,
 job runner under a simulated daily-quota interruption, drive dedupe keeping the
 newest copy, thread watching, draft→approve→send, PDF reading.
 
-**Never run against live credentials or a real Docker build.** First real use
+Boot itself is now verified for real: `start.sh` -> gunicorn -> `/health`
+returning ok. **Still never run against live credentials.** First real use
 should be a narrow `gmail_triage` (`categories: ["promotions"]`) before anything
 touches the whole mailbox.
 

@@ -30,6 +30,9 @@ RUN mkdir -p /data
 
 EXPOSE 8080
 
-# One worker on purpose: the scheduler runs in-process, and two workers would
-# fire every follow-up and every job slice twice.
-CMD gunicorn app:app --bind 0.0.0.0:${PORT:-8080} --workers 1 --threads 8 --timeout 300 --access-logfile - --error-logfile -
+RUN chmod +x /app/start.sh
+
+# start.sh expands PORT itself, so this works whether or not the platform runs
+# the command through a shell. One worker on purpose: the scheduler runs
+# in-process, and two workers would fire every follow-up and job slice twice.
+CMD ["/app/start.sh"]
