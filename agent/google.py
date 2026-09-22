@@ -39,12 +39,43 @@ def _token() -> str:
     return _TOKEN["value"]
 
 
-def _api(method: str, url: str, **kw):
-    r = requests.request(method, url, headers={"Authorization": f"Bearer {_token()}"},
-                         timeout=30, **kw)
-    if r.status_code >= 300:
-        raise GoogleError(f"{method} {url.split('/')[-1]} → {r.status_code}: {r.text[:200]}")
-    return r.json() if r.content else {}
+class QuotaError(GoogleError):
+    """Rate limit or daily quota. The caller should stop and come back later."""
+
+    def __init__(self, msg, retry_after: int = 0, daily: bool = False):
+        super().__init__(msg)
+        self.retry_after = retry_after
+        self.daily = daily
+
+
+def _api(method: str, url: str, retries: int = 4, **kw):
+    """One API call, with backoff on transient limits and a clear signal when the
+    daily quota is spent — bulk jobs need to distinguish 'wait 8 seconds' from
+    'come back tomorrow'."""
+    delay = 2
+    for attempt in range(retries):
+        r = requests.request(method, url, headers={"Authorization": f"Bearer {_token()}"},
+                             timeout=60, **kw)
+        if r.status_code < 300:
+            return r.json() if r.content else {}
+        body = r.text[:400]
+        if r.status_code in (429, 403) and any(
+                k in body for k in ("rateLimitExceeded", "userRateLimitExceeded",
+                                    "quotaExceeded", "Quota exceeded")):
+            daily = "Daily Limit" in body or "dailyLimitExceeded" in body
+            if daily or attempt == retries - 1:
+                raise QuotaError(f"Google quota: {body[:200]}",
+                                 retry_after=int(r.headers.get("Retry-After", 0)),
+                                 daily=daily)
+            time.sleep(delay)
+            delay *= 2
+            continue
+        if r.status_code >= 500 and attempt < retries - 1:
+            time.sleep(delay)
+            delay *= 2
+            continue
+        raise GoogleError(f"{method} {url.split('/')[-1]} → {r.status_code}: {body[:200]}")
+    raise GoogleError("exhausted retries")
 
 
 # ─── Gmail ────────────────────────────────────────────────────────────────────
@@ -203,3 +234,98 @@ def contacts_search(query: str, limit: int = 8) -> dict:
             "phones": [t.get("value") for t in p.get("phoneNumbers", [])],
             "org": (p.get("organizations") or [{}])[0].get("name", "")})
     return {"contacts": out}
+
+
+# ─── Gmail in bulk ────────────────────────────────────────────────────────────
+# Reading 15,000 messages one at a time is a day of API calls. These page over
+# ids and mutate up to 1,000 at a time, which is how a mailbox clean-up finishes.
+
+def list_ids(query: str, page_token: str = "", page_size: int = 500) -> dict:
+    """Message ids matching a query, one page at a time. Cheap: no bodies."""
+    params = {"q": query, "maxResults": min(page_size, 500)}
+    if page_token:
+        params["pageToken"] = page_token
+    d = _api("GET", f"{GM}/messages", params=params)
+    return {"ids": [m["id"] for m in d.get("messages", [])],
+            "next_page_token": d.get("nextPageToken", ""),
+            "estimate": d.get("resultSizeEstimate", 0)}
+
+
+def headers_of(message_ids: list[str]) -> list[dict]:
+    """From/subject/date for a batch of ids, without pulling bodies."""
+    out = []
+    for mid in message_ids:
+        try:
+            d = _api("GET", f"{GM}/messages/{mid}", params={
+                "format": "metadata",
+                "metadataHeaders": ["From", "Subject", "Date", "List-Unsubscribe"]})
+        except QuotaError:
+            raise
+        except GoogleError:
+            continue
+        p = d.get("payload", {})
+        out.append({"id": mid, "thread_id": d.get("threadId"),
+                    "from": _header(p, "from"), "subject": _header(p, "subject"),
+                    "date": _header(p, "date"), "snippet": d.get("snippet", "")[:300],
+                    "unsubscribe": bool(_header(p, "list-unsubscribe")),
+                    "labels": d.get("labelIds", [])})
+    return out
+
+
+def batch_modify(message_ids: list[str], add: list | None = None,
+                 remove: list | None = None) -> dict:
+    """Label / unlabel up to 1,000 messages in one call."""
+    done = 0
+    for i in range(0, len(message_ids), 1000):
+        chunk = message_ids[i:i + 1000]
+        _api("POST", f"{GM}/messages/batchModify",
+             json={"ids": chunk, "addLabelIds": add or [],
+                   "removeLabelIds": remove or []})
+        done += len(chunk)
+    return {"modified": done, "added": add or [], "removed": remove or []}
+
+
+def batch_trash(message_ids: list[str]) -> dict:
+    """Move messages to Trash (recoverable for 30 days). Never a hard delete —
+    a bulk delete that cannot be undone is not something to hand an agent."""
+    return batch_modify(message_ids, add=["TRASH"], remove=["INBOX"])
+
+
+def labels() -> dict:
+    d = _api("GET", f"{GM}/labels")
+    return {"labels": [{"id": l["id"], "name": l["name"], "type": l.get("type")}
+                       for l in d.get("labels", [])]}
+
+
+def label_id(name: str, create: bool = True) -> str:
+    """Resolve a label name to an id, creating it if needed."""
+    for l in labels()["labels"]:
+        if l["name"].lower() == name.lower():
+            return l["id"]
+    if not create:
+        return ""
+    d = _api("POST", f"{GM}/labels", json={
+        "name": name, "labelListVisibility": "labelShow",
+        "messageListVisibility": "show"})
+    log.info(f"🏷  created label {name}")
+    return d["id"]
+
+
+# ─── Drive in bulk ────────────────────────────────────────────────────────────
+
+def drive_page(page_token: str = "", page_size: int = 200,
+               query: str = "trashed=false") -> dict:
+    """Page over every file with the fields duplicate detection needs."""
+    params = {"q": query, "pageSize": min(page_size, 1000),
+              "fields": "nextPageToken,files(id,name,size,md5Checksum,mimeType,"
+                        "modifiedTime,parents,webViewLink)",
+              "orderBy": "folder,name"}
+    if page_token:
+        params["pageToken"] = page_token
+    d = _api("GET", f"{DRIVE}/files", params=params)
+    return {"files": d.get("files", []), "next_page_token": d.get("nextPageToken", "")}
+
+
+def drive_trash(file_id: str) -> dict:
+    _api("PATCH", f"{DRIVE}/files/{file_id}", json={"trashed": True})
+    return {"trashed": file_id}

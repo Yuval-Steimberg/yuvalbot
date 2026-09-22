@@ -1,6 +1,6 @@
 """A personal agent: git-backed markdown memory, proactive scheduling, real actions."""
 
-from . import memory, tasks, approvals, config
+from . import memory, tasks, approvals, config, jobs
 
 
 def boot():
@@ -8,3 +8,4 @@ def boot():
     memory.init()
     tasks.init_db()
     approvals.init_db()
+    jobs.init_db()

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import (memory, tasks, channels, llm, web, browser, google, vault,
-               approvals, config, mcp)
+               approvals, config, mcp, jobs, workers)
 
 log = logging.getLogger("yuvalbot.tools")
 
@@ -122,6 +122,60 @@ SCHEMAS = [
          "query": {"type": "string"}, "limit": {"type": "integer", "default": 8}},
          "required": ["query"]}},
 
+    # ─── long-running work ───────────────────────────────────────────────────
+    {"name": "job_start",
+     "description": "Start a background job for work too big for one reply — "
+                    "thousands of emails, a whole Drive, anything that takes hours. "
+                    "It survives quota limits and resumes by itself, and reports "
+                    "progress to the owner. Kinds: gmail_triage (move bulk mail out "
+                    "of the inbox under labels), gmail_subscriptions (find recurring "
+                    "charges), gmail_purge (trash mail matching a query — needs "
+                    "approval), drive_dedupe (find duplicate files), "
+                    "drive_purge_dupes (trash all but the newest of each duplicate "
+                    "group from a finished drive_dedupe — needs approval), "
+                    "agent_task (any other multi-hour goal, in your own words).",
+     "input_schema": {"type": "object", "properties": {
+         "kind": {"type": "string", "enum": list(workers.HANDLERS)},
+         "goal": {"type": "string", "description": "required for agent_task"},
+         "params": {"type": "object",
+                    "description": "gmail_triage: {categories, label_prefix}; "
+                                   "gmail_subscriptions: {months}; gmail_purge: "
+                                   "{query}; drive_purge_dupes: {from_job}"}},
+         "required": ["kind"]}},
+    {"name": "job_status", "description": "Progress of one background job.",
+     "input_schema": {"type": "object", "properties": {"id": {"type": "integer"}},
+                      "required": ["id"]}},
+    {"name": "job_list", "description": "Background jobs and their progress.",
+     "input_schema": {"type": "object", "properties": {
+         "active_only": {"type": "boolean", "default": True}}}},
+    {"name": "job_cancel", "description": "Stop a background job.",
+     "input_schema": {"type": "object", "properties": {"id": {"type": "integer"}},
+                      "required": ["id"]}},
+
+    # ─── bulk mail ───────────────────────────────────────────────────────────
+    {"name": "gmail_count",
+     "description": "How many messages match a Gmail query (an estimate, one call). "
+                    "Use this before proposing bulk work so you quote real numbers.",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}},
+                      "required": ["query"]}},
+    {"name": "gmail_labels", "description": "List the mailbox's labels.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "gmail_bulk_label",
+     "description": "Apply/remove a label across every message matching a query "
+                    "(reversible; use 'remove_inbox' to file mail out of the inbox). "
+                    "For more than a few thousand, start a gmail_triage job instead.",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string"}, "label": {"type": "string"},
+         "remove_inbox": {"type": "boolean", "default": False},
+         "max": {"type": "integer", "default": 500}},
+         "required": ["query", "label"]}},
+    {"name": "gmail_bulk_trash",
+     "description": "Move every message matching a query to Trash (recoverable for "
+                    "30 days). Needs approval. Say the count first.",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string"}, "max": {"type": "integer", "default": 500}},
+         "required": ["query"]}},
+
     # ─── the open web ────────────────────────────────────────────────────────
     {"name": "web_search", "description": "Search the web.",
      "input_schema": {"type": "object", "properties": {
@@ -222,6 +276,11 @@ def _summarize(name: str, args: dict) -> str:
                f"({len(args.get('steps') or [])} steps)"
     if name == "shell":
         return f"Run: {args.get('command')}"
+    if name == "gmail_bulk_trash":
+        return f"Move every message matching '{args.get('query')}' to Trash " \
+               f"(up to {args.get('max', 500)}, recoverable for 30 days)"
+    if name == "job_start":
+        return f"Start a {args.get('kind')} job — {args.get('goal') or args.get('params')}"
     if name == "send_email":
         return f"Email {args.get('to')} — {args.get('subject')}"
     return f"{name} {json.dumps(args)[:300]}"
@@ -237,6 +296,8 @@ def _needs_approval(name: str, args: dict) -> bool:
         return False
     if name == "calendar_create_event":
         return bool(args.get("attendees"))      # solo blocks on your own calendar are safe
+    if name == "job_start":
+        return args.get("kind") in workers.DESTRUCTIVE
     return name in approvals.GATED
 
 
@@ -304,6 +365,32 @@ def execute(name: str, args: dict) -> dict:
         return google.create_event(args["summary"], args["start"], args["end"],
                                    args.get("description", ""), args.get("location", ""),
                                    args.get("attendees"))
+
+    if name == "job_start":
+        return jobs.start(args["kind"], args.get("goal", ""), args.get("params") or {},
+                          args.get("channel", "auto"))
+    if name == "job_status":
+        j = jobs.get(int(args["id"]))
+        return j or {"error": f"no job #{args['id']}"}
+    if name == "job_list":
+        return {"jobs": jobs.listing(active_only=args.get("active_only", True))}
+    if name == "job_cancel":
+        return jobs.cancel(int(args["id"]))
+
+    if name == "gmail_count":
+        return {"query": args["query"],
+                "approx_count": google.list_ids(args["query"], "", 1)["estimate"]}
+    if name == "gmail_labels":
+        return google.labels()
+    if name == "gmail_bulk_label":
+        ids = google.list_ids(args["query"], "", min(args.get("max", 500), 500))["ids"]
+        if not ids:
+            return {"modified": 0, "note": "nothing matched"}
+        return google.batch_modify(ids, add=[google.label_id(args["label"])],
+                                   remove=["INBOX"] if args.get("remove_inbox") else [])
+    if name == "gmail_bulk_trash":
+        ids = google.list_ids(args["query"], "", min(args.get("max", 500), 500))["ids"]
+        return google.batch_trash(ids) if ids else {"modified": 0, "note": "nothing matched"}
 
     if name == "drive_search":
         return google.drive_search(args["query"], args.get("limit", 10))

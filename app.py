@@ -12,7 +12,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 import agent
 from agent import (brain, consolidate, memory, tasks, approvals, config, vault,
-                   telegram, mcp)
+                   telegram, mcp, jobs)
 from agent.channels import verify_twilio
 
 logging.basicConfig(level=logging.INFO,
@@ -164,6 +164,11 @@ async function loadCap(){const j=await(await fetch('/api/status')).json();
    (v.error?' · '+v.error:'')+'</div>').join(''):'<div class=meta>none configured</div>')+
   '<div class=row><button onclick="fetch(\'/api/mcp/reload\',{method:\'POST\'}).then(loadCap)">'+
   'Reload</button></div>'+
+  '</div><div class=card><h4>background jobs</h4>'+
+  ((j.jobs||[]).length?j.jobs.map(t=>'<div class=meta>#'+t.id+' '+t.kind+' ['+t.status+'] '+
+   (t.progress||'')+(t.status=='queued'||t.status=='waiting'||t.status=='running'?
+   ' <a onclick="fetch(\'/api/jobs/'+t.id+'/cancel\',{method:\'POST\'}).then(loadCap)">cancel</a>':'')+
+   '</div>').join(''):'<div class=meta>none</div>')+
   '</div><div class=card><h4>follow-ups</h4>'+(j.followups.length?j.followups.map(t=>
   '<div class=meta>#'+t.id+' '+t.due+' — '+t.what+'</div>').join(''):'<div class=meta>none</div>')+
   '</div><div class=card><h4>secrets stored</h4><div class=meta>'+
@@ -228,6 +233,7 @@ def api_decide(aid):
 def api_status():
     return jsonify({"capabilities": config.capabilities(),
                     "mcp": mcp.status(),
+                    "jobs": jobs.listing(limit=12),
                     "memory": memory.stats(),
                     "followups": tasks.pending(),
                     "secrets": vault.names() if os.environ.get("VAULT_KEY") else []})
@@ -243,6 +249,18 @@ def api_secrets():
         return jsonify(vault.put(d["name"], d["value"]))
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/jobs")
+@login_required
+def api_jobs():
+    return jsonify({"jobs": jobs.listing(limit=30)})
+
+
+@app.route("/api/jobs/<int:jid>/cancel", methods=["POST"])
+@login_required
+def api_job_cancel(jid):
+    return jsonify(jobs.cancel(jid))
 
 
 @app.route("/api/mcp")
@@ -340,6 +358,15 @@ def health():
 
 # ─── the clock ────────────────────────────────────────────────────────────────
 
+def jobs_tick():
+    """Advance one slice of background work. Jobs are what let the agent keep
+    working through thousands of items over hours."""
+    try:
+        jobs.tick()
+    except Exception as e:
+        log.error(f"job tick error: {e}")
+
+
 def agent_tick():
     try:
         done = brain.tick()
@@ -368,6 +395,8 @@ def start_scheduler():
     s.add_job(agent_tick, "interval",
               minutes=int(os.environ.get("AGENT_TICK_MINUTES", "5")),
               id="tick", replace_existing=True)
+    s.add_job(jobs_tick, "interval", seconds=int(os.environ.get("JOB_TICK_SECONDS", "60")),
+              id="jobs", replace_existing=True, max_instances=1)
     s.add_job(nightly_consolidation, "cron",
               hour=int(os.environ.get("CONSOLIDATE_HOUR_UTC", "3")),
               id="consolidate", replace_existing=True)

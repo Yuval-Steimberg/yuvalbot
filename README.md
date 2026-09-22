@@ -95,7 +95,28 @@ hands the inbox plus the most related existing records to the model, which
 returns write/archive operations: merge rather than duplicate, append dated
 corrections, promote open loops into `workstreams`, drop chatter. One commit.
 
-### 4. Approvals — the brake
+### 4. Long jobs — work that outlives a message
+
+A chat turn is a dozen tool calls and then it is over. Sorting fifteen thousand
+emails is not that shape, so that work goes to `job_start`: a row in sqlite with
+its own state, advanced one time-boxed slice at a time by the scheduler.
+
+* It **resumes**. Google's daily quota is not a failure — the job saves its place,
+  tells you "resuming 06:00 UTC", and carries on tomorrow.
+* It **reports**. Progress lands on your phone every few thousand items, and the
+  finish sends a summary. Nothing is claimed that has not happened.
+* It **files rather than deletes**. `gmail_triage` moves Gmail's bulk categories
+  out of the inbox under real labels; trashing anything is a separate,
+  approval-gated job, and trash is recoverable for 30 days.
+
+Built-in kinds: `gmail_triage` (empty the inbox of bulk mail), `gmail_subscriptions`
+(find every recurring charge across a year of billing mail), `gmail_purge`
+(trash by query — gated), `drive_dedupe` (hash every file, group duplicates),
+`drive_purge_dupes` (trash all but the newest — gated), and `agent_task`: any
+other multi-hour goal, where each slice is one agent turn carrying notes from the
+last, until it answers `DONE:`.
+
+### 5. Approvals — the brake
 
 Sending mail to a third party, inviting people to an event, driving a form on a
 website, running a shell command: the tool call returns `awaiting_approval`
