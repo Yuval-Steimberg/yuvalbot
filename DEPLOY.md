@@ -160,7 +160,7 @@ Message the bot, in this order:
 | gmail tools error | refresh token was minted without the API enabled; redo step 7 |
 | `no refresh_token returned` | you already approved this client once — revoke it at myaccount.google.com/permissions and rerun |
 | browser tools unavailable | image built with `INSTALL_BROWSER=0`, or the service is on the Nixpacks fallback |
-| `'$PORT' is not a valid port number` | old commit — the start command must be `/app/start.sh`, which expands PORT itself; Railway runs the start command without a shell |
+| `'$PORT' is not a valid port number` | a **Custom Start Command** is saved on the service and overrides the image. Settings > Deploy > Custom Start Command: clear it (or set it to `/app/start.sh`). Redeploying alone will not fix this — the stale command outlives every deploy |
 | "The Dockerfile failed validation" | pull the latest `main` — a `VOLUME` instruction and non-ASCII comments tripped Railway's validator. If it still fails, Settings > Build > Builder > **Nixpacks**: everything works except the browser tools and npx MCP servers |
 | MCP server red in status | bad package name, missing token, or it needs a runtime that is not in the image |
 | `MCP_SERVERS` ignored | not valid JSON — the boot log says so |

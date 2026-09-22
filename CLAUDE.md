@@ -54,9 +54,12 @@ DEPLOY.md           the Railway walkthrough — keep it in step with reality
 
 ## Conventions
 
-* **The start command is `start.sh`, never an inline `$PORT`.** Railway runs the
-  start command without a shell, so an unexpanded `$PORT` reaches gunicorn as a
-  literal string and the container crash-loops. The script expands it itself.
+* **The start command lives in the Dockerfile's `CMD` (`/app/start.sh`) and
+  nowhere else.** Railway runs a start command without a shell, so an inline
+  `$PORT` reaches gunicorn as a literal string. Worse, a `startCommand` in
+  `railway.json` is saved onto the service and keeps overriding the image after
+  the repo changes — so `railway.json` deliberately defines none, and a stale one
+  has to be cleared by hand in Settings > Deploy.
 * **The Dockerfile stays plain ASCII and declares no `VOLUME`** — Railway manages
   the volume and rejects Dockerfiles that declare one. `nixpacks.toml` is the
   fallback builder (no Chromium, no npx MCP servers).
