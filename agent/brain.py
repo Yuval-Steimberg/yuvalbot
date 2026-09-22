@@ -128,7 +128,7 @@ def _context() -> str:
 
 
 def run(user_input: str, channel: str = "web", history_turns: int = 12,
-        max_steps: int = 12) -> str:
+        max_steps: int = 12, used: list | None = None) -> str:
     msgs = []
     for t in tasks.recent_turns(history_turns):
         if t["content"].strip():
@@ -154,6 +154,8 @@ def run(user_input: str, channel: str = "web", history_turns: int = 12,
         results = []
         for c in calls:
             log.info(f"🔧 {c['name']} {str(c.get('input'))[:120]}")
+            if used is not None:
+                used.append(c["name"])
             out = tools.dispatch(c["name"], c.get("input") or {})
             results.append({"type": "tool_result", "tool_use_id": c["id"],
                             "content": str(out)[:8000]})
@@ -175,8 +177,17 @@ def tick() -> list[dict]:
         prompt = (f"[SCHEDULED FOLLOW-UP #{t['id']}, booked for {t['due']}]\n{t['what']}\n\n"
                   f"{config.OWNER_NAME} is not watching. Do the work now. If it is worth "
                   f"telling them, send_message on '{t['channel']}'. Otherwise say why not.")
+        used: list[str] = []
         try:
-            out = run(prompt, channel=f"followup:{t['channel']}")
+            out = run(prompt, channel=f"followup:{t['channel']}", used=used)
+            # The model often just *writes* the answer instead of calling
+            # send_message. Nobody is reading the transcript, so deliver it.
+            if out.strip() and not any(
+                    n in used for n in ("send_message", "gmail_send", "gmail_draft")):
+                from . import channels
+                delivered = channels.send(t.get("channel") or "auto", out[:1500])
+                log.info(f"📤 follow-up #{t['id']} answer delivered directly: "
+                         f"{delivered}")
         except Exception as e:
             out = f"failed: {type(e).__name__}: {e}"
             log.exception(f"follow-up #{t['id']} failed")

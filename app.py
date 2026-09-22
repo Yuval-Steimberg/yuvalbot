@@ -665,8 +665,15 @@ def api_tick():
 @app.route("/api/followups")
 @login_required
 def api_followups():
+    import sqlite3
+    con = sqlite3.connect(config.DB_PATH)
+    con.row_factory = sqlite3.Row
+    recent = [dict(r) for r in con.execute(
+        "SELECT id,due,what,channel,status,last_run,substr(result,1,400) AS result "
+        "FROM tasks ORDER BY id DESC LIMIT 15")]
+    con.close()
     return jsonify({"now_utc": tasks.now(), "pending": tasks.pending(),
-                    "due_now": tasks.due_now(10)})
+                    "due_now": tasks.due_now(10), "recent": recent})
 
 
 @app.route("/api/jobs")
