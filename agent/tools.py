@@ -404,8 +404,12 @@ def execute(name: str, args: dict) -> dict:
                 "weekday": utc.strftime("%A"), "timezone": config.TIMEZONE}
 
     if name == "schedule_followup":
-        return tasks.add(args["when"], args["what"], args.get("channel", "auto"),
-                         int(args.get("repeat_hours", 0)))
+        try:
+            return tasks.add(args["when"], args["what"], args.get("channel", "auto"),
+                             int(args.get("repeat_hours", 0)))
+        except tasks.BadDueDate as e:
+            return {"error": str(e), "retry": "call schedule_followup again with a "
+                                              "time in one of those forms"}
     if name == "list_followups":
         return {"tasks": tasks.pending()}
     if name == "cancel_followup":

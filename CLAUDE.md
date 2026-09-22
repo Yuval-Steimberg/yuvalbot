@@ -66,6 +66,9 @@ DEPLOY.md           the Railway walkthrough — keep it in step with reality
 * No new dependencies unless unavoidable — Google, Telegram and MCP are all plain
   `requests`. Current deps: flask, gunicorn, apscheduler, requests, cryptography,
   playwright (optional), pypdf.
+* **Due dates are compared as strings in sqlite**, so anything that is not an ISO
+  UTC timestamp never comes due. `tasks._parse_due` raises `BadDueDate` rather
+  than storing something that would silently never fire.
 * Every capability degrades honestly: missing credentials disable a tool and are
   reported in `config.capabilities()`, never crash a turn.
 * Prompt changes live in `brain.SYSTEM`. It is the product as much as the code is.

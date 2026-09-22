@@ -350,6 +350,13 @@ def api_telegram_register():
     return jsonify(telegram.set_webhook(config.PUBLIC_URL))
 
 
+@app.route("/api/followups")
+@login_required
+def api_followups():
+    return jsonify({"now_utc": tasks.now(), "pending": tasks.pending(),
+                    "due_now": tasks.due_now(10)})
+
+
 @app.route("/api/jobs")
 @login_required
 def api_jobs():
@@ -494,7 +501,7 @@ def morning_review():
 def start_scheduler():
     s = BackgroundScheduler(timezone="UTC")
     s.add_job(agent_tick, "interval",
-              minutes=int(os.environ.get("AGENT_TICK_MINUTES", "5")),
+              minutes=int(os.environ.get("AGENT_TICK_MINUTES", "1")),
               id="tick", replace_existing=True)
     s.add_job(jobs_tick, "interval", seconds=int(os.environ.get("JOB_TICK_SECONDS", "60")),
               id="jobs", replace_existing=True, max_instances=1)
