@@ -440,6 +440,94 @@ check("the prompt forbids asking for secrets in chat",
 check("and requires a follow-up on anything blocked",
       "Every blocked request gets one" in brain.SYSTEM)
 
+print("\nsigning in on the owner's behalf")
+from agent import signin                                               # noqa: E402
+check("the vault name matches what a person would pick",
+      signin.credentials("https://www.airbnb.com/login")[2]
+      == ["AIRBNB_EMAIL", "AIRBNB_PASSWORD"])
+without = signin.sign_in("airbnb.com")
+check("with nothing stored it names the two secrets to ask for",
+      without["need"] == ["AIRBNB_EMAIL", "AIRBNB_PASSWORD"])
+check("and says to do it itself afterwards, not hand over a browser",
+      "do not ask them to drive" in without["next"])
+vault.put("AIRBNB_EMAIL", "me@example.com")
+vault.put("AIRBNB_PASSWORD", "hunter2")
+
+calls = {}
+
+
+class FakePage:
+    def __init__(self, stage):
+        self.stage, self.filled = stage, {}
+        self.url = "https://www.airbnb.com/login"
+
+    def goto(self, url, **k):
+        calls["goto"] = url
+
+    def wait_for_timeout(self, ms):
+        pass
+
+    def query_selector(self, sel):
+        if "password" in sel and self.stage == "no-password":
+            return None
+        if "password" in sel and self.stage == "done" and calls.get("submitted"):
+            return None
+        if "code" in sel or "one-time" in sel:
+            return None if self.stage != "code" else _El(self, "code")
+        if "email" in sel or "user" in sel or "tel" in sel:
+            return _El(self, "user")
+        if "password" in sel:
+            return _El(self, "pass")
+        if "button" in sel or "submit" in sel:
+            return _El(self, "submit")
+        return None
+
+    def inner_text(self, sel):
+        return ("Enter the verification code we sent" if self.stage == "code"
+                else "Welcome back, Yuval")
+
+
+class _El:
+    def __init__(self, page, kind):
+        self.page, self.kind = page, kind
+
+    def is_visible(self):
+        return True
+
+    def fill(self, v):
+        self.page.filled[self.kind] = v
+
+    def click(self):
+        calls["submitted"] = True
+
+
+class FakeWorker:
+    def __init__(self, stage):
+        self._page = FakePage(stage)
+
+    def save_state(self):
+        calls["saved"] = True
+        return {"saved": True}
+
+
+w = FakeWorker("done")
+res = signin._sign_in(w, "airbnb.com", "me@example.com", "hunter2")
+check("it fills the stored credentials itself",
+      w._page.filled.get("user") == "me@example.com"
+      and w._page.filled.get("pass") == "hunter2")
+check("it goes to the site's real login page",
+      calls["goto"] == "https://www.airbnb.com/login")
+check("a successful sign-in is saved for next time",
+      res["ok"] and calls.get("saved"))
+w2 = FakeWorker("code")
+res2 = signin._sign_in(w2, "airbnb.com", "me@example.com", "hunter2")
+check("a code prompt asks for the code, not the password",
+      res2["stage"] == "needs a verification code"
+      and "browser_enter_code" in res2["next"])
+check("the prompt tries signing in before handing over a browser",
+      "site_sign_in first" in brain.SYSTEM
+      and "fallback, not the opener" in brain.SYSTEM)
+
 print("\nself check")
 from agent import diagnose                                             # noqa: E402
 report = diagnose.run()

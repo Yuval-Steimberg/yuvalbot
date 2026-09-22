@@ -285,6 +285,22 @@ SCHEMAS = [
                     "returns nothing useful or the page needs a login you have saved.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string"}},
                       "required": ["url"]}},
+    {"name": "site_sign_in",
+     "description": "Sign into a website yourself using credentials the owner "
+                    "stored in the vault. Try this FIRST when asked to connect to "
+                    "a site — do not hand them a browser to drive. If nothing is "
+                    "stored it tells you which two names to ask for; send "
+                    "vault_link for those, then call this again. If the site wants "
+                    "a verification code, ask for just the code and pass it to "
+                    "browser_enter_code.",
+     "input_schema": {"type": "object", "properties": {
+         "site": {"type": "string", "description": "e.g. airbnb.com"}},
+         "required": ["site"]}},
+    {"name": "browser_enter_code",
+     "description": "Type a verification code into the page waiting for one, and "
+                    "finish signing in.",
+     "input_schema": {"type": "object", "properties": {
+         "code": {"type": "string"}}, "required": ["code"]}},
     {"name": "browser_login_link",
      "description": "A link to a browser {owner} can drive from their phone and "
                     "sign into themselves. Use this for any site with no API — "
@@ -620,6 +636,12 @@ def execute(name: str, args: dict) -> dict:
         return web.search(args["query"], args.get("limit", 6))
     if name == "web_fetch":
         return web.fetch(args["url"])
+    if name == "site_sign_in":
+        from . import signin
+        return signin.sign_in(args["site"])
+    if name == "browser_enter_code":
+        from . import signin
+        return signin.enter_code(args["code"])
     if name == "browser_login_link":
         from . import oauth, livebrowser
         if not livebrowser.available():
