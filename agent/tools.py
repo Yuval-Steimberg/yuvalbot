@@ -311,6 +311,13 @@ SCHEMAS = [
      "description": "Which connected apps (MCP servers) are live and how many "
                     "tools each exposes. Use when an mcp__ tool errors.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "self_check",
+     "description": "Try every capability for real — model, memory, mail, "
+                    "calendar, drive, filters, browser, scheduler, jobs — and "
+                    "report what works and what does not. Use it whenever the "
+                    "owner asks what you can do, or when something failed and you "
+                    "are not sure why.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "connect_link",
      "description": "A tap-to-connect link for Google (Gmail, Calendar, Drive, "
                     "Contacts). Send this when the owner asks how to connect their "
@@ -628,6 +635,9 @@ def execute(name: str, args: dict) -> dict:
         return browser.act(args["url"], args.get("steps") or [])
     if name == "mcp_status":
         return mcp.status()
+    if name == "self_check":
+        from . import diagnose
+        return diagnose.run()
     if name == "connect_link":
         from . import oauth
         if not config.PUBLIC_URL:

@@ -414,6 +414,20 @@ check("bold and bullets convert", "<b>כותרת</b>" in html and "• item" in 
 check("plain fallback strips everything", "*" not in strip_markdown(messy)
       and "#" not in strip_markdown(messy))
 
+print("\nself check")
+from agent import diagnose                                             # noqa: E402
+report = diagnose.run()
+check("every capability is exercised",
+      {"model", "memory", "read mail", "browser", "scheduler"}
+      <= {c["check"] for c in report["checks"]})
+check("a missing capability says why and what to do",
+      all(c["fix"] for c in report["checks"] if not c["ok"]))
+check("memory works even with nothing connected",
+      any(c["check"] == "memory" and c["ok"] for c in report["checks"]))
+check("the summary counts what works", "working" in report["summary"])
+check("the agent can run it itself",
+      "checks" in tools.dispatch("self_check", {}))
+
 print("\nshape of the toolset")
 bad = [t["name"] for t in tools.SCHEMAS
        if not t.get("description") or t["input_schema"].get("type") != "object"]

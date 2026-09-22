@@ -984,6 +984,13 @@ def api_ready():
         "checks": checks})
 
 
+@app.route("/api/diagnose")
+@login_required
+def api_diagnose():
+    from agent import diagnose
+    return jsonify(diagnose.run())
+
+
 @app.route("/api/selftest")
 @login_required
 def api_selftest():

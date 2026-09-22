@@ -23,6 +23,7 @@ agent/
   composio.py       click-through app connections: auth configs, consent links,
                     tool-router sessions exposed to the MCP client
   store.py          encrypted settings on the volume (browser-supplied secrets)
+  diagnose.py       live self check: exercises every capability for real
   livebrowser.py    one Chromium on a worker thread, driven from /browser, with a
                     saved session so sites without an API stay signed in
   mcp.py            MCP client (stdio + streamable HTTP), tools as mcp__<server>__<tool>
@@ -102,6 +103,8 @@ tests/test_all.py   35 end-to-end checks, everything external stubbed
   scheduler from an idle one.
 * Every capability degrades honestly: missing credentials disable a tool and are
   reported in `config.capabilities()`, never crash a turn.
+* **Ask `self_check` before reporting a capability broken** — it hits the real
+  accounts and names the one action that fixes each failure.
 * Prompt changes live in `brain.SYSTEM`. It is the product as much as the code is.
 * Test handlers and tools by stubbing `agent.google` / `agent.llm.call`; there are
   no live credentials in dev.
