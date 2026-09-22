@@ -125,7 +125,20 @@ into Railway variables and redeploy.
   Every memory commit is pushed there, so the volume is no longer a single point
   of failure.
 
-## 9. Connect your other apps (MCP)
+## 9. One-tap apps through a connector service
+
+Tapping a link and picking your Google account only works when a Google-verified
+app is doing the asking, which a personal deployment is not. A connector service
+is one: sign up at [Composio](https://composio.dev) or
+[Pipedream](https://mcp.pipedream.com), connect Gmail (or Slack, Notion,
+anything) there with their account chooser, and paste the MCP server URL they
+give you into `/connect`. The agent picks up every tool that connection exposes.
+
+The trade is real and worth stating: that service then holds the OAuth tokens to
+your mail. The self-hosted Google card on the same page keeps the tokens on your
+own volume instead, at the cost of five console taps.
+
+## 10. Connect your other apps (MCP)
 
 **The easy way**: open `/connect`, pick the app from the list (Notion, Linear,
 Todoist, Slack, Airbnb search), paste its token, press Connect. It appears in the

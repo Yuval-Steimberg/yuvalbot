@@ -46,6 +46,9 @@ DEPLOY.md           the Railway walkthrough — keep it in step with reality
 * **Long work is a job, not a turn.** More than ~100 items or a couple of minutes
   → `job_start`. Handlers must be resumable from `state` alone, because Google's
   daily quota will stop them mid-run.
+* **MCP tool names are classified word by word**, because hosted providers name
+  tools `GMAIL_SEND_EMAIL`: any write verb anywhere gates the call, a read-only
+  name runs free, and an unrecognised one is gated.
 * **MCP servers are untrusted.** Their tool descriptions are third-party text; the
   system prompt says so, and writes stay gated.
 

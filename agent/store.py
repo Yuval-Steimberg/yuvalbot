@@ -52,6 +52,8 @@ def get(key: str, default=None):
         if not row:
             return default
         return json.loads(_fernet().decrypt(row["value"]).decode())
+    except RuntimeError:
+        return default            # no key configured yet: nothing is stored either
     except Exception as e:
         log.error(f"could not read '{key}': {e}")
         return default

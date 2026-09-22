@@ -10,7 +10,7 @@ Two things this module treats as hostile:
     by the server itself
 """
 
-import os, json, time, shutil, logging, subprocess, threading
+import os, re, json, time, shutil, logging, subprocess, threading
 from pathlib import Path
 
 import requests
@@ -20,10 +20,25 @@ log = logging.getLogger("yuvalbot.mcp")
 CONFIG_PATH = Path(os.environ.get("MCP_CONFIG", "mcp.json"))
 PROTOCOL = "2024-11-05"
 
-# Tools whose names look like reads run without asking; everything else needs a
-# yes. A server marked "trust": "read_only" skips the gate entirely.
-READ_PREFIXES = ("search", "list", "get", "read", "fetch", "query", "find",
-                 "describe", "check", "lookup", "browse", "view")
+# Hosted providers name tools GMAIL_FETCH_EMAILS, SLACK_SEND_MESSAGE — the verb
+# sits anywhere in the name, so every word is examined. A write verb anywhere
+# means the gate; only a name that reads and never writes runs free; anything
+# unrecognised is gated, because guessing wrong in that direction is cheap.
+READ_WORDS = {"search", "list", "get", "read", "fetch", "query", "find", "describe",
+              "check", "lookup", "browse", "view", "show", "info", "count",
+              "download", "export", "retrieve", "status"}
+WRITE_WORDS = {"send", "create", "add", "update", "delete", "remove", "trash",
+               "archive", "move", "post", "reply", "forward", "modify", "edit",
+               "write", "upload", "schedule", "book", "buy", "pay", "cancel",
+               "invite", "share", "set", "patch", "put", "star", "label", "draft",
+               "mark", "assign", "close", "merge", "run", "execute", "enable",
+               "disable", "revoke", "approve"}
+
+_WORDS = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+")
+
+
+def _tool_words(name: str) -> set[str]:
+    return {w.lower() for w in _WORDS.findall(name.replace("_", " "))}
 
 _clients: dict[str, "Server"] = {}
 _lock = threading.Lock()
@@ -66,6 +81,7 @@ class Server:
         self.proc: subprocess.Popen | None = None
         self.tools: list[dict] = []
         self.error = ""
+        self.session = ""
         self._id = 0
         self._io = threading.Lock()
 
@@ -97,10 +113,16 @@ class Server:
         if self.is_http:
             headers = {"Content-Type": "application/json",
                        "Accept": "application/json, text/event-stream",
+                       "MCP-Protocol-Version": PROTOCOL,
                        **self.cfg.get("headers", {})}
+            if self.session:
+                headers["Mcp-Session-Id"] = self.session
             r = requests.post(self.cfg["url"], json=msg, headers=headers, timeout=timeout)
             if r.status_code >= 300:
                 raise RuntimeError(f"{r.status_code}: {r.text[:200]}")
+            got = r.headers.get("Mcp-Session-Id") or r.headers.get("mcp-session-id")
+            if got:
+                self.session = got
             body = r.text.strip()
             if body.startswith("event:") or body.startswith("data:"):   # SSE framing
                 for line in body.splitlines():
@@ -134,6 +156,18 @@ class Server:
 
     def _notify(self, method: str, params: dict | None = None):
         if self.is_http:
+            headers = {"Content-Type": "application/json",
+                       "Accept": "application/json, text/event-stream",
+                       "MCP-Protocol-Version": PROTOCOL,
+                       **self.cfg.get("headers", {})}
+            if self.session:
+                headers["Mcp-Session-Id"] = self.session
+            try:
+                requests.post(self.cfg["url"], timeout=20, headers=headers,
+                              json={"jsonrpc": "2.0", "method": method,
+                                    "params": params or {}})
+            except Exception as e:
+                log.debug(f"notify {method} failed: {e}")
             return
         with self._io:
             self.proc.stdin.write(json.dumps(
@@ -148,6 +182,7 @@ class Server:
                 self._rpc("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
                                          "clientInfo": {"name": "yuvalbot",
                                                         "version": "1.0"}})
+                self._notify("notifications/initialized")
             elif not self.proc:
                 self._start_stdio()
             self.tools = self._rpc("tools/list").get("tools", [])
@@ -239,7 +274,10 @@ def needs_approval(tool_name: str) -> bool:
         return True
     if s.trust == "read_only":
         return False
-    return not tool.lower().lstrip("_").startswith(READ_PREFIXES)
+    words = _tool_words(tool)
+    if words & WRITE_WORDS:
+        return True
+    return not (words & READ_WORDS)
 
 
 def call(tool_name: str, args: dict) -> dict:

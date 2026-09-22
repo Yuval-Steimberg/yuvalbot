@@ -348,8 +348,52 @@ def _mcp_card() -> str:
       </div>""")
 
 
+PROVIDERS = {
+    "composio": {"label": "Composio", "signup": "https://composio.dev",
+                 "hint": "Sign up, connect Gmail there (Google account chooser, one "
+                         "tap), then copy the MCP server URL it gives you."},
+    "pipedream": {"label": "Pipedream Connect", "signup": "https://mcp.pipedream.com",
+                  "hint": "Connect the app on their page, then copy the MCP URL: "
+                          "remote.mcp.pipedream.net/<user>/<app>."},
+}
+
+
+def _hosted_card() -> str:
+    """The one-tap route: let a connector service own the OAuth dance.
+
+    Tapping a link and picking a Google account only works when a Google-verified
+    app is doing the asking. This deployment is not one, and never will be. A
+    connector service is: it holds the verified app, runs the account chooser,
+    and exposes the result as an MCP endpoint this agent can use directly.
+    The cost is real — that service holds tokens to the mail.
+    """
+    hosted = {k: v for k, v in (store.get("mcp_servers", {}) or {}).items()
+              if v.get("hosted")}
+    rows = "".join(f"<div class=note>🟢 <b>{k}</b> — {v.get('url', '')[:60]}…</div>"
+                   for k, v in hosted.items())
+    links = " · ".join(
+        f"<a href='{p['signup']}' target=_blank style='color:#00ff88'>{p['label']}</a>"
+        for p in PROVIDERS.values())
+    return _card("One-tap apps (connector service)", f"{len(hosted)} linked",
+                 bool(hosted), f"""
+      {rows}
+      <p class=note>Tap-a-link-and-pick-your-Google-account only works for a
+      Google-verified app. This deployment is not one. A connector service is:
+      it runs the account chooser for you and hands back one URL to paste here.
+      In exchange, that service holds the tokens to your mail.</p>
+      <p class=note>Sign up and connect your apps at: {links}</p>
+      <form method=POST action='/connect/hosted'>
+        <label>Name it</label><input name=name placeholder="gmail" required>
+        <label>MCP server URL from the provider</label>
+        <input name=url placeholder="https://mcp.composio.dev/..." required>
+        <label>Bearer token, if the URL alone is not enough</label>
+        <input name=token placeholder="optional">
+        <button>Link it</button>
+      </form>""")
+
+
 def _connect_html() -> str:
-    body = (_google_card() + _telegram_card() + _mcp_card()
+    body = (_hosted_card() + _google_card() + _telegram_card() + _mcp_card()
             + _key_card("Brave Search", "BRAVE_API_KEY", "BSA...",
                         "Search that does not get rate limited. "
                         "brave.com/search/api, free tier.")
@@ -443,6 +487,28 @@ def connect_google_forget():
 @login_required
 def connect_telegram_unlink():
     store.delete("telegram_chat_id")
+    return redirect("/connect")
+
+
+@app.route("/connect/hosted", methods=["POST"])
+@login_required
+def connect_hosted():
+    name = (request.form.get("name") or "").strip().lower().replace(" ", "_")
+    url = (request.form.get("url") or "").strip()
+    token = (request.form.get("token") or "").strip()
+    if not name or not url.startswith("http"):
+        return "a name and an https URL are required", 400
+    cfg = {"url": url, "trust": "gated", "hosted": True}
+    if token:
+        cfg["headers"] = {"Authorization": f"Bearer {token}"}
+    servers = store.get("mcp_servers", {}) or {}
+    servers[name] = cfg
+    store.put("mcp_servers", servers)
+    mcp.reload()
+    state = mcp.status().get(name, {})
+    if state.get("error"):
+        return (f"Saved, but the server did not answer: {state['error']}<br><br>"
+                f"<a href='/connect'>back</a>"), 200
     return redirect("/connect")
 
 
