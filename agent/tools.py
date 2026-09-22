@@ -324,6 +324,15 @@ SCHEMAS = [
                     "mail or when a Google tool is unavailable. It expires in 30 "
                     "minutes and opens the connect page without a password.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "vault_link",
+     "description": "A link to a private page where the owner can store a "
+                    "credential you need — a site password, an account number, an "
+                    "API key. Send this instead of ever asking for a secret in "
+                    "chat. You reference it later as {{secret:NAME}} and never see "
+                    "the value.",
+     "input_schema": {"type": "object", "properties": {
+         "for_what": {"type": "string",
+                      "description": "suggested name, e.g. AIRBNB_PASSWORD"}}}},
     {"name": "vault_list",
      "description": "Names of stored credentials you may reference as {{secret:NAME}}.",
      "input_schema": {"type": "object", "properties": {}}},
@@ -644,6 +653,17 @@ def execute(name: str, args: dict) -> dict:
             return {"error": "no public URL, so no link can be made"}
         return {"url": oauth.connect_link(),
                 "note": "valid 30 minutes; one tap, then Google's consent screen"}
+    if name == "vault_link":
+        from . import oauth
+        if not config.PUBLIC_URL:
+            return {"error": "no public URL, so no link can be made"}
+        from urllib.parse import quote
+        label = (args.get("for_what") or "").strip()
+        url = f"{config.PUBLIC_URL}/vault?t={oauth.sign('vault')}"
+        if label:
+            url += f"&for={quote(label, safe='')}"
+        return {"url": url, "note": "valid 30 minutes; the value never reaches you "
+                                    "or the chat"}
     if name == "vault_list":
         return {"secrets": vault.names() if os.environ.get("VAULT_KEY") else [],
                 "note": "reference as {{secret:NAME}} in browser_act fill values"}

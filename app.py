@@ -839,6 +839,104 @@ def api_browser_save():
     return _bcall(livebrowser._Worker.save_state)
 
 
+# ─── A place to put a credential that is not a chat message ──────────────────
+
+VAULT_PAGE = """<!DOCTYPE html><html><head><title>Vault</title>
+<meta name=viewport content="width=device-width,initial-scale=1"><style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0a0a0f;color:#dde;font:15px/1.6 ui-monospace,monospace;padding:20px;
+max-width:620px;margin:0 auto}}
+h1{{font-size:20px;color:#fff}}h1 span{{color:#00ff88}}
+p.sub{{color:#556;font-size:13px;margin-bottom:20px}}
+.card{{border:1px solid #1a1a2e;border-radius:10px;padding:16px;background:#0d0d16;
+margin-bottom:14px}}
+label{{display:block;color:#889;font-size:12px;margin:10px 0 4px}}
+input{{width:100%;background:#060608;border:1px solid #1a1a2e;color:#fff;padding:11px;
+border-radius:6px;font:inherit;font-size:13px}}
+button{{background:#00ff88;color:#000;border:0;padding:11px 18px;border-radius:6px;
+font:inherit;font-weight:700;font-size:13px;cursor:pointer;margin-top:12px}}
+button.g{{background:#151527;color:#aab;padding:5px 11px;margin:0}}
+.note{{color:#667;font-size:12px;margin-top:8px}}
+.row{{display:flex;justify-content:space-between;align-items:center;color:#9aa;
+font-size:13px;padding:5px 0}}
+</style></head><body>
+<h1>vault<span>.</span></h1>
+<p class=sub>Stored encrypted on your own server. The agent uses these by name
+and never sees the value — not in chat, not in its own transcript.</p>
+<div class=card>
+  <h3 style="color:#fff;font-size:15px">Stored</h3>
+  {rows}
+</div>
+<div class=card>
+  <form method=POST action='/vault/add'>
+    <label>What it is for</label>
+    <input name=name required placeholder="AIRBNB_PASSWORD" value="{suggest}">
+    <label>The value</label>
+    <input name=value type=password required placeholder="••••••••">
+    <button>Save</button>
+  </form>
+  <p class=note>{state}</p>
+</div>
+<div class=card><a href="/" style="color:#00ff88;text-decoration:none">back</a></div>
+</body></html>"""
+
+
+def _vault_allowed() -> bool:
+    if session.get("ok"):
+        return True
+    t = request.args.get("t", "")
+    if t and oauth.verify(t, "vault"):
+        session["ok"] = True
+        session.permanent = True
+        return True
+    return False
+
+
+@app.route("/vault")
+def vault_page():
+    if not _vault_allowed():
+        return redirect("/login")
+    try:
+        names = vault.names()
+        state = "Encrypted with your VAULT_KEY."
+    except Exception as e:
+        names, state = [], f"Cannot open the vault: {e}"
+    rows = "".join(
+        f"<div class=row><span>🔐 {n}</span>"
+        f"<form method=POST action='/vault/delete' style='margin:0'>"
+        f"<input type=hidden name=name value='{n}'>"
+        f"<button class=g>remove</button></form></div>" for n in names) \
+        or "<p class=note>Nothing stored yet.</p>"
+    return VAULT_PAGE.format(rows=rows, state=state,
+                             suggest=(request.args.get("for") or "").upper())
+
+
+@app.route("/vault/add", methods=["POST"])
+@login_required
+def vault_add():
+    name = (request.form.get("name") or "").strip().upper().replace(" ", "_")
+    value = request.form.get("value") or ""
+    if not name or not value:
+        return redirect("/vault")
+    try:
+        vault.put(name, value)
+    except Exception as e:
+        return f"Could not save: {e}<br><a href='/vault'>back</a>", 200
+    try:
+        telegram.send(f"Saved {name} in the vault. I will use it without ever "
+                      f"seeing it.")
+    except Exception:
+        pass
+    return redirect("/vault")
+
+
+@app.route("/vault/delete", methods=["POST"])
+@login_required
+def vault_delete():
+    vault.delete((request.form.get("name") or "").strip())
+    return redirect("/vault")
+
+
 # ─── API ──────────────────────────────────────────────────────────────────────
 
 @app.route("/api/chat", methods=["POST"])

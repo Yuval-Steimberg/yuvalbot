@@ -118,6 +118,15 @@ From then on it can search your bookings, fill forms and act on that site, with
 anything that changes something still gated behind your yes. The saved session
 lives on your volume, encrypted alongside everything else.
 
+## 3c. Anything that needs a secret
+
+The agent never asks for a password in a chat message. When it needs one it
+sends a link to your own **vault** page: you type it there, it is encrypted on
+your volume with `VAULT_KEY`, and the agent uses it by name — `{{secret:NAME}}` —
+without the value ever reaching the model or the transcript.
+
+Set `VAULT_KEY` in Railway for this to work.
+
 ## 4. Nice to have
 
 | what | where |

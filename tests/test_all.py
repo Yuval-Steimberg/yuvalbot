@@ -414,6 +414,32 @@ check("bold and bullets convert", "<b>כותרת</b>" in html and "• item" in 
 check("plain fallback strips everything", "*" not in strip_markdown(messy)
       and "#" not in strip_markdown(messy))
 
+print("\nsecrets never go through chat")
+os.environ["VAULT_KEY"] = "test-vault-key"
+os.environ["VAULT_PATH"] = f"{TMP}/v.enc"
+import importlib                                                       # noqa: E402
+from agent import vault                                                # noqa: E402
+importlib.reload(vault)
+vlink = tools.dispatch("vault_link", {"for_what": "airbnb_password"})
+vtoken = parse_qs(urlparse(vlink["url"]).query)["t"][0]
+check("a credential request becomes a link, not a question",
+      oauth.verify(vtoken, "vault"))
+check("that link cannot be reused for the browser",
+      not oauth.verify(vtoken, "browser"))
+vc = webapp.app.test_client()
+check("the vault page refuses an anonymous visitor", vc.get("/vault").status_code == 302)
+page = vc.get(f"/vault?t={vtoken}&for=airbnb_password").data.decode()
+check("and suggests the name the agent asked for", "AIRBNB_PASSWORD" in page)
+vc.post("/vault/add", data={"name": "airbnb password", "value": "hunter2"})
+check("the secret is stored under a tidy name", "AIRBNB_PASSWORD" in vault.names())
+check("the page never shows the value back", "hunter2" not in vc.get("/vault").data.decode())
+check("the agent can use it without seeing it",
+      vault.fill("pw={{secret:AIRBNB_PASSWORD}}") == "pw=hunter2")
+check("the prompt forbids asking for secrets in chat",
+      "Never ask for a password" in brain.SYSTEM)
+check("and requires a follow-up on anything blocked",
+      "Every blocked request gets one" in brain.SYSTEM)
+
 print("\nself check")
 from agent import diagnose                                             # noqa: E402
 report = diagnose.run()
