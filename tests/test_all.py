@@ -372,7 +372,8 @@ livebrowser.available = lambda: True
 link = tools.dispatch("browser_login_link", {"site": "airbnb.com"})
 check("a site with no API gets a sign-in link, not a password request",
       link.get("url", "").startswith("http") and link.get("open_first") == "airbnb.com")
-token = link["url"].split("t=")[1]
+from urllib.parse import urlparse, parse_qs                          # noqa: E402
+token = parse_qs(urlparse(link["url"]).query)["t"][0]
 check("that link is signed and purpose-scoped",
       oauth.verify(token, "browser") and not oauth.verify(token, "connect"))
 check("the browser page refuses an anonymous visitor",
@@ -381,8 +382,7 @@ check("and opens for the signed link",
       webapp.app.test_client().get(f"/browser?t={token}").status_code == 200)
 check("the link opens on the site the agent named", "&u=airbnb.com" in link["url"])
 page = webapp.app.test_client().get(
-    link["url"].split(".app")[1] if ".app" in link["url"]
-    else f"/browser?t={token}&u=airbnb.com").data.decode()
+    f"/browser?t={token}&u=airbnb.com").data.decode()
 check("and the page starts there rather than blank",
       'value="airbnb.com"' in page and "__START__" not in page)
 check("the agent can see which sites are already signed in",
