@@ -12,7 +12,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 import agent
 from agent import (brain, consolidate, memory, tasks, approvals, config, vault,
-                   telegram, mcp, jobs)
+                   telegram, mcp, jobs, tools)
 from agent.channels import verify_twilio
 
 logging.basicConfig(level=logging.INFO,
@@ -255,6 +255,54 @@ def api_secrets():
         return jsonify({"error": str(e)}), 400
 
 
+@app.route("/api/selftest")
+@login_required
+def api_selftest():
+    """Exercise the pieces a turn needs, one at a time, and name the one that
+    fails — reachable without container logs."""
+    from agent import llm, memory, tasks as _tasks
+    out = {}
+
+    try:
+        r = llm.call([{"role": "user", "content": "reply with the word ok"}],
+                     model=config.MODEL, max_tokens=16)
+        out["model_call"] = {"ok": True, "model": config.MODEL,
+                             "said": "".join(b.get("text", "")
+                                             for b in r.get("content", []))[:40]}
+    except Exception as e:
+        out["model_call"] = {"ok": False, "model": config.MODEL, "error": str(e)[:500]}
+
+    try:
+        r = llm.call([{"role": "user", "content": "list my follow-ups"}],
+                     system="You are a test.", tools=tools.all_schemas(),
+                     model=config.MODEL, max_tokens=64)
+        out["tool_schemas"] = {"ok": True, "count": len(tools.all_schemas()),
+                               "stop_reason": r.get("stop_reason")}
+    except Exception as e:
+        out["tool_schemas"] = {"ok": False, "count": len(tools.all_schemas()),
+                               "error": str(e)[:700]}
+
+    try:
+        rec = memory.write("facts", "Self test",
+                           "The agent wrote this during a self test.",
+                           aliases=["selftest"])
+        out["memory_write"] = {"ok": True, **rec}
+    except Exception as e:
+        out["memory_write"] = {"ok": False, "error": str(e)[:400]}
+
+    try:
+        _tasks.log_turn("system", "selftest", "selftest")
+        out["database"] = {"ok": True, "path": str(config.DB_PATH)}
+    except Exception as e:
+        out["database"] = {"ok": False, "error": str(e)[:400]}
+
+    out["verdict"] = next((f"{k} failed: {v.get('error')}"
+                           for k, v in out.items()
+                           if isinstance(v, dict) and v.get("ok") is False),
+                          "All green — a chat turn should work.")
+    return jsonify(out)
+
+
 @app.route("/api/telegram")
 @login_required
 def api_telegram():
@@ -364,8 +412,10 @@ def _answer_async(text: str, channel: str, deliver):
         try:
             reply = brain.run(text, channel=channel)
         except Exception as e:
-            log.error(f"{channel} turn failed: {e}")
-            reply = "Something broke on my side — try again."
+            # Say what actually broke. This is a single-user agent talking to its
+            # owner, and "something went wrong" costs an hour of guessing.
+            log.exception(f"{channel} turn failed")
+            reply = f"Broke on my side: {type(e).__name__}: {e}"[:900]
         deliver(reply)
     threading.Thread(target=go, daemon=True).start()
 
