@@ -71,8 +71,14 @@ FAST_MODEL = os.environ.get("AGENT_FAST_MODEL", "claude-haiku-4-5-20251001")
 AUTO_APPROVE = os.environ.get("AUTO_APPROVE", "0") == "1"
 
 
+def setting(env: str, default: str = "") -> str:
+    """A credential, from the environment or from what was connected in the UI."""
+    from . import store
+    return os.environ.get(env) or store.store_str(env.lower()) or default
+
+
 def have(*keys) -> bool:
-    return all(os.environ.get(k) for k in keys)
+    return all(setting(k) for k in keys)
 
 
 def google_ready() -> bool:
@@ -106,15 +112,16 @@ def capabilities() -> dict:
 REQUIREMENTS = {
     "llm": "ANTHROPIC_API_KEY",
     "whatsapp": "TWILIO_SID + TWILIO_TOKEN + YOUR_PHONE",
-    "telegram": "TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID",
-    "email_out": "RESEND_API_KEY + EMAIL_TO",
+    "telegram": "open /connect and link Telegram in two taps",
+    "email_out": "a Resend key on /connect",
     "gmail": "open the /connect page and press Connect Google",
     "calendar": "open the /connect page and press Connect Google",
     "drive": "open the /connect page and press Connect Google",
     "contacts": "open the /connect page and press Connect Google",
     "browser": "the playwright package in the image",
     "vault": "VAULT_KEY",
-    "web_search": "BRAVE_API_KEY or SERPER_API_KEY (falls back to DuckDuckGo)",
+    "mcp": "add a server on /connect",
+    "web_search": "a Brave or Serper key on /connect (DuckDuckGo otherwise)",
     "persistent_storage": "a volume mounted at DATA_DIR",
 }
 

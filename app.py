@@ -192,81 +192,176 @@ def index():
 
 # ─── Connecting accounts from a phone ────────────────────────────────────────
 
-CONNECT_PAGE = """<!DOCTYPE html><html><head><title>Connect accounts</title>
+PAGE = """<!DOCTYPE html><html><head><title>Connect</title>
 <meta name=viewport content="width=device-width,initial-scale=1"><style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{background:#0a0a0f;color:#dde;font:15px/1.6 ui-monospace,monospace;padding:20px;
-max-width:640px;margin:0 auto}}
-h1{{font-size:20px;color:#fff;margin-bottom:4px}}h1 span{{color:#00ff88}}
+max-width:660px;margin:0 auto}}
+h1{{font-size:21px;color:#fff}}h1 span{{color:#00ff88}}
 p.sub{{color:#556;font-size:13px;margin-bottom:22px}}
 .card{{border:1px solid #1a1a2e;border-radius:10px;padding:16px;background:#0d0d16;
 margin-bottom:14px}}
-.card h3{{font-size:15px;color:#fff;margin-bottom:4px}}
-.ok{{color:#00ff88}}.off{{color:#667}}
+.card h3{{font-size:15px;color:#fff;margin-bottom:2px}}
+.ok{{color:#00ff88;font-size:12px}}.off{{color:#667;font-size:12px}}
 label{{display:block;color:#889;font-size:12px;margin:10px 0 4px}}
-input{{width:100%;background:#060608;border:1px solid #1a1a2e;color:#fff;padding:11px;
-border-radius:6px;font:inherit;font-size:13px}}
-button,a.btn{{display:inline-block;background:#00ff88;color:#000;border:0;padding:12px 20px;
-border-radius:6px;font:inherit;font-weight:700;cursor:pointer;margin-top:12px;
-text-decoration:none}}
-a.ghost{{background:#151527;color:#aab}}
-ol{{margin:10px 0 0 18px;color:#99a;font-size:13px}}ol li{{margin-bottom:6px}}
-code{{background:#060608;padding:2px 6px;border-radius:4px;color:#00ff88;font-size:12px;
-word-break:break-all}}
-.note{{color:#667;font-size:12px;margin-top:10px}}
+input,select{{width:100%;background:#060608;border:1px solid #1a1a2e;color:#fff;
+padding:10px;border-radius:6px;font:inherit;font-size:13px}}
+button,a.btn{{display:inline-block;background:#00ff88;color:#000;border:0;
+padding:11px 18px;border-radius:6px;font:inherit;font-weight:700;cursor:pointer;
+margin-top:11px;text-decoration:none;font-size:13px}}
+a.ghost,button.ghost{{background:#151527;color:#aab}}
+ol{{margin:8px 0 0 18px;color:#99a;font-size:12.5px}}ol li{{margin-bottom:5px}}
+code{{background:#060608;padding:2px 6px;border-radius:4px;color:#00ff88;
+font-size:12px;word-break:break-all}}
+.note{{color:#667;font-size:12px;margin-top:8px}}
+.row{{display:flex;gap:8px;flex-wrap:wrap}}
+.row form{{margin:0}}
 </style></head><body>
 <h1>connect<span>.</span></h1>
-<p class=sub>Gmail, Calendar, Drive and Contacts — one connection.</p>
-
-<div class=card>
-  <h3>Google <span class="{google_class}">{google_state}</span></h3>
-  {google_body}
-</div>
-
-<div class=card>
-  <h3>Everything else</h3>
-  <p class=note>Telegram, search keys and other apps are environment variables on
-  the deployment. The status tab lists what is live.</p>
-  <a class="btn ghost" href="/">back to the agent</a>
-</div>
+<p class=sub>Everything the agent can reach. No terminal.</p>
+{body}
+<div class=card><a class="btn ghost" href="/">back to the agent</a></div>
 </body></html>"""
+
+CATALOG = {
+    "notion": {"label": "Notion", "command": "npx",
+               "args": ["-y", "@notionhq/notion-mcp-server"], "env_key": "NOTION_TOKEN",
+               "hint": "Internal integration token from notion.so/my-integrations"},
+    "linear": {"label": "Linear", "url": "https://mcp.linear.app/mcp",
+               "env_key": "AUTHORIZATION", "hint": "A Linear personal API key"},
+    "todoist": {"label": "Todoist", "command": "npx",
+                "args": ["-y", "@abhiz123/todoist-mcp-server"],
+                "env_key": "TODOIST_API_TOKEN", "hint": "todoist.com/app/settings/integrations"},
+    "slack": {"label": "Slack", "command": "npx",
+              "args": ["-y", "@modelcontextprotocol/server-slack"],
+              "env_key": "SLACK_BOT_TOKEN", "hint": "A bot token, xoxb-..."},
+    "airbnb": {"label": "Airbnb (search only)", "command": "npx",
+               "args": ["-y", "@openbnb/mcp-server-airbnb"], "env_key": "",
+               "hint": "No key. Community server, read-only, breaks often."},
+}
+
+
+def _card(title, state, on, body) -> str:
+    cls = "ok" if on else "off"
+    return (f"<div class=card><h3>{title} <span class='{cls}'>{state}</span></h3>"
+            f"{body}</div>")
+
+
+def _google_card() -> str:
+    cid, secret = oauth.client()
+    if oauth.connected():
+        return _card("Google", "connected", True,
+                     "<p class=note>Gmail, Calendar, Drive and Contacts are live.</p>"
+                     "<form method=POST action='/connect/google/forget'>"
+                     "<button class=ghost>Disconnect</button></form>")
+    if cid and secret:
+        return _card("Google", "one tap left", False,
+                     "<p class=note>Google will call the app unverified — that is "
+                     "expected for your own project: <b>Advanced &rarr; Go to "
+                     "(unsafe)</b>.</p>"
+                     "<a class=btn href='/connect/google'>Connect Google</a>")
+    return _card("Google", "needs an OAuth client", False, f"""
+      <p class=note>Google will not issue credentials for someone else's app, so
+      this deployment needs its own client. Once, from any browser:</p>
+      <ol><li>console.cloud.google.com &rarr; new project</li>
+      <li>Enable <b>Gmail</b>, <b>Calendar</b>, <b>Drive</b>, <b>People</b> APIs</li>
+      <li>OAuth consent screen &rarr; External &rarr; add yourself as a test user</li>
+      <li>Credentials &rarr; OAuth client ID &rarr; <b>Web application</b></li>
+      <li>Redirect URI, exactly:<br><code>{oauth.redirect_uri()}</code></li></ol>
+      <form method=POST action='/connect/google/client'>
+        <label>Client ID</label><input name=client_id required
+          placeholder="...apps.googleusercontent.com">
+        <label>Client secret</label><input name=client_secret required
+          placeholder="GOCSPX-...">
+        <button>Save</button></form>""")
+
+
+def _telegram_card() -> str:
+    if not telegram.configured():
+        return _card("Telegram", "no bot yet", False, """
+          <p class=note>Message <b>@BotFather</b> on Telegram, send
+          <code>/newbot</code>, and paste the token it gives you.</p>
+          <form method=POST action='/connect/key'>
+            <input type=hidden name=key value=TELEGRAM_BOT_TOKEN>
+            <label>Bot token</label><input name=value required
+              placeholder="8012345678:AAH9x...">
+            <button>Save</button></form>""")
+    if telegram.chat_id():
+        return _card("Telegram", "linked", True,
+                     "<p class=note>The agent can message you first — reminders, job "
+                     "progress, replies that arrive while you are away.</p>"
+                     "<form method=POST action='/connect/telegram/unlink'>"
+                     "<button class=ghost>Unlink this chat</button></form>")
+    info = telegram.me().get("result", {})
+    user = info.get("username", "")
+    if not user:
+        return _card("Telegram", "token rejected", False,
+                     "<p class=note>Telegram did not recognise that token. Check it "
+                     "with @BotFather and save it again.</p>")
+    code = oauth.new_nonce("telegram-link")
+    return _card("Telegram", "one tap left", False,
+                 f"<p class=note>Tap to open the chat and link it to you. Nobody "
+                 f"else can drive the agent.</p>"
+                 f"<a class=btn href='https://t.me/{user}?start={code}'>"
+                 f"Open @{user} and link</a>")
+
+
+def _key_card(title, key, placeholder, note, extra=None) -> str:
+    on = bool(config.setting(key))
+    fields = "".join(
+        f"<label>{lbl}</label><input name='{k}' placeholder='{ph}'>"
+        for k, lbl, ph in (extra or []))
+    return _card(title, "set" if on else "not set", on, f"""
+      <p class=note>{note}</p>
+      <form method=POST action='/connect/key'>
+        <input type=hidden name=key value='{key}'>
+        <label>{title} key</label><input name=value required placeholder='{placeholder}'>
+        {fields}<button>Save</button></form>""")
+
+
+def _mcp_card() -> str:
+    status = mcp.status()
+    rows = "".join(
+        f"<div class=note>{'🟢' if not v['error'] else '🔴'} <b>{k}</b> — "
+        f"{v['tools']} tools · {v['trust']}{(' · ' + v['error']) if v['error'] else ''} "
+        f"<form method=POST action='/connect/mcp/remove' style='display:inline'>"
+        f"<input type=hidden name=name value='{k}'>"
+        f"<button class=ghost style='padding:3px 9px;margin:0'>remove</button>"
+        f"</form></div>" for k, v in status.items()) or \
+        "<p class=note>No apps connected yet.</p>"
+    options = "".join(f"<option value='{k}'>{v['label']}</option>"
+                      for k, v in CATALOG.items())
+    hints = " · ".join(f"<b>{v['label']}</b>: {v['hint']}" for v in CATALOG.values())
+    return _card("Apps (MCP)", f"{len(status)} connected", bool(status), f"""
+      {rows}
+      <form method=POST action='/connect/mcp/add'>
+        <label>Add an app</label>
+        <select name=preset>{options}</select>
+        <label>Token or key for it</label>
+        <input name=token placeholder="paste the app's token">
+        <button>Connect</button>
+      </form>
+      <p class=note>{hints}</p>
+      <div class=row>
+        <form method=POST action='/connect/mcp/reload'><button class=ghost>
+          Reload apps</button></form>
+      </div>""")
 
 
 def _connect_html() -> str:
-    cid, secret = oauth.client()
-    if oauth.connected():
-        body = ("<p class=note>Connected. Gmail, Calendar, Drive and Contacts are "
-                "available to the agent.</p>"
-                "<form method=POST action='/connect/google/forget'>"
-                "<button class=ghost>Disconnect</button></form>")
-        return CONNECT_PAGE.format(google_class="ok", google_state="connected",
-                                   google_body=body)
-    if cid and secret:
-        body = (f"<p class=note>Client saved. One tap left — Google will warn that "
-                f"the app is unverified, which is expected for your own project: "
-                f"choose <b>Advanced &rarr; Go to (unsafe)</b>.</p>"
-                f"<a class=btn href='/connect/google'>Connect Google</a>")
-        return CONNECT_PAGE.format(google_class="off", google_state="not connected",
-                                   google_body=body)
-    body = f"""<p class=note>Google will not hand out credentials for someone
-      else's app, so this deployment needs its own OAuth client. Once, from any
-      browser:</p>
-    <ol>
-      <li>console.cloud.google.com &rarr; create a project</li>
-      <li>APIs &amp; Services &rarr; Library: enable <b>Gmail</b>, <b>Calendar</b>,
-          <b>Drive</b> and <b>People</b></li>
-      <li>OAuth consent screen &rarr; External &rarr; add your own Gmail as a test user</li>
-      <li>Credentials &rarr; Create credentials &rarr; OAuth client ID &rarr;
-          <b>Web application</b></li>
-      <li>Authorised redirect URI, exactly:<br><code>{oauth.redirect_uri()}</code></li>
-    </ol>
-    <form method=POST action='/connect/google/client'>
-      <label>Client ID</label><input name=client_id placeholder="....apps.googleusercontent.com" required>
-      <label>Client secret</label><input name=client_secret placeholder="GOCSPX-..." required>
-      <button>Save and continue</button>
-    </form>"""
-    return CONNECT_PAGE.format(google_class="off", google_state="not set up",
-                               google_body=body)
+    body = (_google_card() + _telegram_card() + _mcp_card()
+            + _key_card("Brave Search", "BRAVE_API_KEY", "BSA...",
+                        "Search that does not get rate limited. "
+                        "brave.com/search/api, free tier.")
+            + _key_card("Resend email", "RESEND_API_KEY", "re_...",
+                        "Only needed if you want mail without Gmail.",
+                        [("EMAIL_TO", "Send to", "you@example.com")]))
+    return PAGE.format(body=body)
+
+
+SETTABLE = {"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "BRAVE_API_KEY", "SERPER_API_KEY",
+            "RESEND_API_KEY", "EMAIL_TO", "EMAIL_FROM", "TWILIO_SID", "TWILIO_TOKEN",
+            "YOUR_PHONE", "ANTHROPIC_WORKSPACE_ID"}
 
 
 def _connect_allowed() -> bool:
@@ -286,6 +381,21 @@ def connect_page():
     if not _connect_allowed():
         return redirect("/login")
     return _connect_html()
+
+
+@app.route("/connect/key", methods=["POST"])
+@login_required
+def connect_key():
+    key = (request.form.get("key") or "").strip().upper()
+    if key not in SETTABLE:
+        return "not a settable key", 400
+    store.put(key.lower(), (request.form.get("value") or "").strip())
+    for extra in SETTABLE:                      # optional companions on the same form
+        if extra != key and request.form.get(extra):
+            store.put(extra.lower(), request.form[extra].strip())
+    if key == "TELEGRAM_BOT_TOKEN" and config.PUBLIC_URL:
+        telegram.set_webhook(config.PUBLIC_URL)
+    return redirect("/connect")
 
 
 @app.route("/connect/google/client", methods=["POST"])
@@ -326,6 +436,54 @@ def oauth_google_callback():
 @login_required
 def connect_google_forget():
     store.delete("google_refresh_token")
+    return redirect("/connect")
+
+
+@app.route("/connect/telegram/unlink", methods=["POST"])
+@login_required
+def connect_telegram_unlink():
+    store.delete("telegram_chat_id")
+    return redirect("/connect")
+
+
+@app.route("/connect/mcp/add", methods=["POST"])
+@login_required
+def connect_mcp_add():
+    preset = CATALOG.get((request.form.get("preset") or "").strip())
+    if not preset:
+        return "unknown app", 400
+    token = (request.form.get("token") or "").strip()
+    name = (request.form.get("preset") or "").strip()
+    cfg = {"trust": "gated"}
+    if preset.get("url"):
+        cfg["url"] = preset["url"]
+        if token:
+            cfg["headers"] = {"Authorization": f"Bearer {token}"}
+    else:
+        cfg.update(command=preset["command"], args=preset["args"])
+        if preset.get("env_key") and token:
+            cfg["env"] = {preset["env_key"]: token}
+    servers = store.get("mcp_servers", {}) or {}
+    servers[name] = cfg
+    store.put("mcp_servers", servers)
+    mcp.reload()
+    return redirect("/connect")
+
+
+@app.route("/connect/mcp/remove", methods=["POST"])
+@login_required
+def connect_mcp_remove():
+    servers = store.get("mcp_servers", {}) or {}
+    servers.pop((request.form.get("name") or "").strip(), None)
+    store.put("mcp_servers", servers)
+    mcp.reload()
+    return redirect("/connect")
+
+
+@app.route("/connect/mcp/reload", methods=["POST"])
+@login_required
+def connect_mcp_reload():
+    mcp.reload()
     return redirect("/connect")
 
 
@@ -594,19 +752,28 @@ def webhook_telegram():
         return jsonify({"ok": True})
     _SEEN.append(uid)
     chat_id, text, who = telegram.parse(update)
-    allowed = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not allowed:
+    allowed = telegram.chat_id()
+    if not allowed and not text.startswith("/start"):
         # A bot username is public: anyone can message it. Until the owner's chat
         # is pinned down, the agent answers nobody — it just hands over the id.
         log.warning(f"TELEGRAM_CHAT_ID unset — refusing to act (chat {chat_id})")
-        telegram.send(f"Not linked yet. Set TELEGRAM_CHAT_ID={chat_id} in the "
-                      f"deployment's variables, then message me again.", chat_id)
+        telegram.send(f"Not linked to anyone yet. Open {config.PUBLIC_URL}/connect "
+                      f"and press the Telegram button, or set TELEGRAM_CHAT_ID="
+                      f"{chat_id} in the deployment's variables.", chat_id)
         return jsonify({"ok": True})
-    if chat_id != allowed:
+    if allowed and chat_id != allowed:
         log.warning(f"ignored telegram message from chat {chat_id} ({who})")
         return jsonify({"ok": True})
     if not text:
         return jsonify({"ok": True})
+    if text.startswith("/start"):
+        payload = text[6:].strip()
+        if payload and not telegram.chat_id() and oauth.check_nonce("telegram-link",
+                                                                    payload):
+            store.put("telegram_chat_id", chat_id)
+            telegram.send("Linked. I will message you here — reminders, job progress, "
+                          "and replies that land while you are away.", chat_id)
+            return jsonify({"ok": True})
     _answer_async(text, "telegram", lambda r: telegram.send(r, chat_id))
     return jsonify({"ok": True})
 

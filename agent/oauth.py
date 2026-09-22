@@ -63,6 +63,26 @@ def verify(token: str, purpose: str) -> bool:
     return data.get("p") == purpose and data.get("exp", 0) > time.time()
 
 
+def new_nonce(purpose: str, ttl_seconds: int = 1800) -> str:
+    """A short one-time code. Telegram deep-link payloads allow only
+    [A-Za-z0-9_-] and 64 characters, so the signed token cannot ride in one."""
+    import secrets
+    code = secrets.token_urlsafe(12).replace("-", "_")
+    pending = {k: v for k, v in (store.get("nonces", {}) or {}).items()
+               if v.get("exp", 0) > time.time()}
+    pending[code] = {"p": purpose, "exp": int(time.time()) + ttl_seconds}
+    store.put("nonces", pending)
+    return code
+
+
+def check_nonce(purpose: str, code: str) -> bool:
+    pending = store.get("nonces", {}) or {}
+    entry = pending.pop(code, None)
+    store.put("nonces", pending)          # single use, valid once
+    return bool(entry and entry.get("p") == purpose
+                and entry.get("exp", 0) > time.time())
+
+
 def connect_link() -> str:
     """A link the owner can tap from anywhere, valid for 30 minutes."""
     return f"{config.PUBLIC_URL}/connect?t={sign('connect')}"

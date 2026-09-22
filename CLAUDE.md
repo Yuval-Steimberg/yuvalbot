@@ -71,6 +71,9 @@ DEPLOY.md           the Railway walkthrough — keep it in step with reality
 * **Due dates are compared as strings in sqlite**, so anything that is not an ISO
   UTC timestamp never comes due. `tasks._parse_due` raises `BadDueDate` rather
   than storing something that would silently never fire.
+* **Anything connectable is connectable from `/connect`** — Google OAuth,
+  Telegram (a `t.me` deep link carrying a single-use code), API keys, and MCP
+  apps from a catalog. A terminal is never the only route.
 * **Credentials resolve environment-first, then the encrypted store**, so a
   browser connection never silently overrides what an operator set explicitly.
 * Every capability degrades honestly: missing credentials disable a tool and are

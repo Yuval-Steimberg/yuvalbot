@@ -12,7 +12,8 @@ UA = {"User-Agent": "Mozilla/5.0 (compatible; yuvalbot/1.0)"}
 
 
 def search(query: str, limit: int = 6) -> dict:
-    brave, serper = os.environ.get("BRAVE_API_KEY"), os.environ.get("SERPER_API_KEY")
+    from . import config
+    brave, serper = config.setting("BRAVE_API_KEY"), config.setting("SERPER_API_KEY")
     try:
         if brave:
             r = requests.get("https://api.search.brave.com/res/v1/web/search",

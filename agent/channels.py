@@ -6,8 +6,9 @@ log = logging.getLogger("yuvalbot.channels")
 
 
 def send_whatsapp(body: str) -> dict:
-    sid, token = os.environ.get("TWILIO_SID", ""), os.environ.get("TWILIO_TOKEN", "")
-    to = os.environ.get("YOUR_PHONE", "").replace("whatsapp:", "").strip()
+    from . import config
+    sid, token = config.setting("TWILIO_SID"), config.setting("TWILIO_TOKEN")
+    to = config.setting("YOUR_PHONE").replace("whatsapp:", "").strip()
     if not all([sid, token, to]):
         return {"ok": False, "error": "TWILIO_SID / TWILIO_TOKEN / YOUR_PHONE not set"}
     frm = os.environ.get("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886")
@@ -25,8 +26,9 @@ def send_whatsapp(body: str) -> dict:
 
 
 def send_email(subject: str, body: str, to: str | None = None) -> dict:
-    key = os.environ.get("RESEND_API_KEY", "")
-    to = to or os.environ.get("EMAIL_TO", "")
+    from . import config
+    key = config.setting("RESEND_API_KEY")
+    to = to or config.setting("EMAIL_TO")
     if not key or not to:
         return {"ok": False, "error": "RESEND_API_KEY / EMAIL_TO not set"}
     html = "<div style='font-family:system-ui,Arial,sans-serif;max-width:640px'>" + \
@@ -35,7 +37,8 @@ def send_email(subject: str, body: str, to: str | None = None) -> dict:
         r = requests.post("https://api.resend.com/emails",
                           headers={"Authorization": f"Bearer {key}",
                                    "Content-Type": "application/json"},
-                          json={"from": os.environ.get("EMAIL_FROM", "onboarding@resend.dev"),
+                          json={"from": config.setting("EMAIL_FROM",
+                                                        "onboarding@resend.dev"),
                                 "to": [to], "subject": subject[:200], "html": html},
                           timeout=25)
         ok = r.status_code in (200, 201)
@@ -71,7 +74,8 @@ def verify_twilio(url: str, params: dict, signature: str) -> bool:
     drive the agent — and the agent can send mail and write memory.
     """
     import hmac, hashlib, base64
-    token = os.environ.get("TWILIO_TOKEN", "")
+    from . import config
+    token = config.setting("TWILIO_TOKEN")
     if not token:
         return not os.environ.get("REQUIRE_TWILIO_SIGNATURE", "1") == "1"
     payload = url + "".join(f"{k}{params[k]}" for k in sorted(params))

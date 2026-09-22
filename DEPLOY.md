@@ -127,8 +127,13 @@ into Railway variables and redeploy.
 
 ## 9. Connect your other apps (MCP)
 
-Get each vendor's MCP config from their docs, merge them into one object, and put
-it in a single Railway variable:
+**The easy way**: open `/connect`, pick the app from the list (Notion, Linear,
+Todoist, Slack, Airbnb search), paste its token, press Connect. It appears in the
+list with a live tool count and can be removed the same way.
+
+**The manual way**, for a server that is not in that list — get the vendor's MCP
+config from their docs, merge them into one object, and put it in a single
+Railway variable:
 
 ```
 MCP_SERVERS={"mcpServers":{"notion":{"command":"npx","args":["-y","@notionhq/notion-mcp-server"],"env":{"NOTION_TOKEN":"ntn_..."}},"linear":{"url":"https://mcp.linear.app/mcp","headers":{"Authorization":"Bearer ..."}}}}

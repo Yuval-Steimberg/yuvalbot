@@ -10,8 +10,23 @@ import os, logging, requests
 log = logging.getLogger("yuvalbot.telegram")
 
 
+def token() -> str:
+    from . import config
+    return config.setting("TELEGRAM_BOT_TOKEN")
+
+
+def chat_id() -> str:
+    from . import config
+    return config.setting("TELEGRAM_CHAT_ID")
+
+
 def configured() -> bool:
-    return bool(os.environ.get("TELEGRAM_BOT_TOKEN"))
+    return bool(token())
+
+
+def me() -> dict:
+    """Who this bot is — used to build the t.me deep link."""
+    return _api("getMe")
 
 
 def _api(method: str, **payload):
@@ -29,22 +44,23 @@ def _api(method: str, **payload):
         return {"ok": False, "error": str(e)}
 
 
-def send(text: str, chat_id: str | None = None) -> dict:
-    chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not chat_id:
-        return {"ok": False, "error": "TELEGRAM_CHAT_ID not set"}
+def send(text: str, chat: str | None = None) -> dict:
+    target = chat or chat_id()
+    if not target:
+        return {"ok": False, "error": "Telegram is not linked yet"}
     # Telegram caps a message at 4096 chars; split rather than truncate.
     chunks = [text[i:i + 3900] for i in range(0, len(text) or 1, 3900)] or [""]
     out = {}
     for c in chunks:
-        out = _api("sendMessage", chat_id=chat_id, text=c,
+        out = _api("sendMessage", chat_id=target, text=c,
                    disable_web_page_preview=True)
     return {"ok": bool(out.get("ok")), "chunks": len(chunks)}
 
 
 def set_webhook(public_url: str) -> dict:
     """Point Telegram at this deployment. Called once at boot."""
-    secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+    from . import config
+    secret = config.setting("TELEGRAM_WEBHOOK_SECRET")
     d = _api("setWebhook", url=f"{public_url}/webhook/telegram",
              secret_token=secret, drop_pending_updates=True,
              allowed_updates=["message"])
@@ -54,11 +70,11 @@ def set_webhook(public_url: str) -> dict:
 
 
 def webhook_info() -> dict:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    if not token:
-        return {"ok": False, "error": "TELEGRAM_BOT_TOKEN not set"}
+    tok = token()
+    if not tok:
+        return {"ok": False, "error": "no Telegram bot token yet"}
     try:
-        return requests.get(f"https://api.telegram.org/bot{token}/getWebhookInfo",
+        return requests.get(f"https://api.telegram.org/bot{tok}/getWebhookInfo",
                             timeout=20).json()
     except Exception as e:
         return {"ok": False, "error": str(e)}

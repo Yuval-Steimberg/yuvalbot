@@ -30,6 +30,17 @@ _lock = threading.Lock()
 
 
 def _config() -> dict:
+    """Servers from MCP_SERVERS, from mcp.json, and from ones added in the UI."""
+    servers = dict(_env_config())
+    try:
+        from . import store
+        servers.update(store.get("mcp_servers", {}) or {})
+    except Exception as e:
+        log.error(f"stored MCP servers unreadable: {e}")
+    return servers
+
+
+def _env_config() -> dict:
     raw = os.environ.get("MCP_SERVERS", "")
     if raw:
         try:
