@@ -12,7 +12,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 import agent
 from agent import (brain, consolidate, memory, tasks, approvals, config, vault,
-                   telegram, mcp, jobs, tools, oauth, store, composio)
+                   telegram, mcp, jobs, tools, oauth, store, composio, livebrowser)
 from agent.channels import verify_twilio
 
 logging.basicConfig(level=logging.INFO,
@@ -691,6 +691,144 @@ def connect_mcp_remove():
 def connect_mcp_reload():
     mcp.reload()
     return redirect("/connect")
+
+
+# ─── A browser you sign into yourself ────────────────────────────────────────
+
+BROWSER_PAGE = """<!DOCTYPE html><html><head><title>Browser</title>
+<meta name=viewport content="width=device-width,initial-scale=1"><style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0f;color:#dde;font:14px ui-monospace,monospace;padding:10px}
+.bar{display:flex;gap:6px;margin-bottom:8px}
+input{flex:1;background:#060608;border:1px solid #1a1a2e;color:#fff;padding:9px;
+border-radius:6px;font:inherit;font-size:13px}
+button{background:#00ff88;color:#000;border:0;padding:9px 12px;border-radius:6px;
+font:inherit;font-weight:700;font-size:12px;cursor:pointer}
+button.g{background:#151527;color:#aab}
+#wrap{position:relative;border:1px solid #1a1a2e;border-radius:8px;overflow:hidden}
+#shot{width:100%;display:block;cursor:crosshair}
+#note{color:#667;font-size:12px;margin:8px 0}
+</style></head><body>
+<div class=bar>
+  <input id=url placeholder="airbnb.com" value="">
+  <button onclick="go()">Go</button>
+  <button class=g onclick="act('back')">←</button>
+</div>
+<div class=bar>
+  <input id=kb placeholder="type here, then press Send">
+  <button onclick="send()">Send</button>
+  <button class=g onclick="act('key',{key:'Enter'})">⏎</button>
+  <button class=g onclick="act('scroll',{dy:600})">▼</button>
+  <button class=g onclick="act('scroll',{dy:-600})">▲</button>
+</div>
+<div id=wrap><img id=shot></div>
+<div id=note>Tap the picture to click. Sign in with your own hands — the agent
+never sees your password. When you are logged in, press Keep me signed in.</div>
+<div class=bar><button onclick="save()">Keep me signed in</button>
+<span id=st style="color:#667;font-size:12px;align-self:center"></span></div>
+<script>
+let vp={width:1100,height:1600};
+async function post(p,b){const r=await fetch('/api/browser/'+p,{method:'POST',
+  headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+  return r.json()}
+async function shot(){try{const j=await(await fetch('/api/browser/shot')).json();
+  if(j.image){document.getElementById('shot').src='data:image/jpeg;base64,'+j.image;
+   vp=j.viewport||vp;document.getElementById('url').placeholder=j.url||'';}
+  else document.getElementById('st').textContent=j.error||''}catch(e){}}
+async function go(){document.getElementById('st').textContent='loading…';
+  await post('goto',{url:document.getElementById('url').value});shot();
+  document.getElementById('st').textContent=''}
+async function act(p,b){await post(p,b);shot()}
+async function send(){const el=document.getElementById('kb');
+  await post('type',{text:el.value});el.value='';shot()}
+async function save(){const j=await post('save');
+  document.getElementById('st').textContent=j.signed_in_to?
+   ('saved: '+j.signed_in_to.slice(0,6).join(', ')):(j.error||'')}
+document.getElementById('shot').onclick=async e=>{
+  const r=e.target.getBoundingClientRect();
+  const x=(e.clientX-r.left)/r.width*vp.width, y=(e.clientY-r.top)/r.height*vp.height;
+  await post('click',{x:x,y:y});shot()};
+shot();setInterval(shot,3000);
+</script></body></html>"""
+
+
+def _browser_allowed() -> bool:
+    if session.get("ok"):
+        return True
+    t = request.args.get("t", "")
+    if t and oauth.verify(t, "browser"):
+        session["ok"] = True
+        session.permanent = True
+        return True
+    return False
+
+
+@app.route("/browser")
+def browser_page():
+    if not _browser_allowed():
+        return redirect("/login")
+    if not livebrowser.available():
+        return ("Playwright is not in this image, so there is no browser to drive. "
+                "Rebuild with INSTALL_BROWSER=1."), 200
+    return BROWSER_PAGE
+
+
+def _bcall(fn, *args, timeout=60):
+    return jsonify(livebrowser.worker().call(fn, *args, timeout=timeout))
+
+
+@app.route("/api/browser/shot")
+@login_required
+def api_browser_shot():
+    return _bcall(livebrowser._Worker.shot, timeout=45)
+
+
+@app.route("/api/browser/goto", methods=["POST"])
+@login_required
+def api_browser_goto():
+    d = request.get_json(silent=True) or {}
+    return _bcall(livebrowser._Worker.goto, d.get("url", ""), timeout=60)
+
+
+@app.route("/api/browser/click", methods=["POST"])
+@login_required
+def api_browser_click():
+    d = request.get_json(silent=True) or {}
+    return _bcall(livebrowser._Worker.click, float(d.get("x", 0)),
+                  float(d.get("y", 0)))
+
+
+@app.route("/api/browser/type", methods=["POST"])
+@login_required
+def api_browser_type():
+    d = request.get_json(silent=True) or {}
+    return _bcall(livebrowser._Worker.type_text, d.get("text", ""))
+
+
+@app.route("/api/browser/key", methods=["POST"])
+@login_required
+def api_browser_key():
+    d = request.get_json(silent=True) or {}
+    return _bcall(livebrowser._Worker.press, d.get("key", "Enter"))
+
+
+@app.route("/api/browser/scroll", methods=["POST"])
+@login_required
+def api_browser_scroll():
+    d = request.get_json(silent=True) or {}
+    return _bcall(livebrowser._Worker.scroll, int(d.get("dy", 500)))
+
+
+@app.route("/api/browser/back", methods=["POST"])
+@login_required
+def api_browser_back():
+    return _bcall(livebrowser._Worker.back)
+
+
+@app.route("/api/browser/save", methods=["POST"])
+@login_required
+def api_browser_save():
+    return _bcall(livebrowser._Worker.save_state)
 
 
 # ─── API ──────────────────────────────────────────────────────────────────────

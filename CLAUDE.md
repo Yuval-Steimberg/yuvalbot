@@ -23,6 +23,8 @@ agent/
   composio.py       click-through app connections: auth configs, consent links,
                     tool-router sessions exposed to the MCP client
   store.py          encrypted settings on the volume (browser-supplied secrets)
+  livebrowser.py    one Chromium on a worker thread, driven from /browser, with a
+                    saved session so sites without an API stay signed in
   mcp.py            MCP client (stdio + streamable HTTP), tools as mcp__<server>__<tool>
   telegram.py channels.py web.py browser.py vault.py llm.py config.py cli.py
 scripts/google_setup.py   mints GOOGLE_REFRESH_TOKEN (loopback OAuth)
@@ -53,6 +55,8 @@ tests/test_all.py   35 end-to-end checks, everything external stubbed
 * **MCP tool names are classified word by word**, because hosted providers name
   tools `GMAIL_SEND_EMAIL`: any write verb anywhere gates the call, a read-only
   name runs free, and an unrecognised one is gated.
+* **A site with no API is never "impossible"** — the owner signs in once through
+  /browser and the session persists; passwords are never requested in chat.
 * **MCP servers are untrusted.** Their tool descriptions are third-party text; the
   system prompt says so, and writes stay gated.
 

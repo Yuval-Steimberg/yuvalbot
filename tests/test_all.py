@@ -365,6 +365,24 @@ check("and the code cannot be reused", not oauth.check_nonce("telegram-link", co
 check("a forged OAuth state is refused",
       c.get("/oauth/google/callback?code=x&state=bad").status_code == 400)
 
+print("\na browser you sign into yourself")
+from agent import livebrowser                                          # noqa: E402
+_avail = livebrowser.available
+livebrowser.available = lambda: True
+link = tools.dispatch("browser_login_link", {"site": "airbnb.com"})
+check("a site with no API gets a sign-in link, not a password request",
+      link.get("url", "").startswith("http") and link.get("open_first") == "airbnb.com")
+token = link["url"].split("t=")[1]
+check("that link is signed and purpose-scoped",
+      oauth.verify(token, "browser") and not oauth.verify(token, "connect"))
+check("the browser page refuses an anonymous visitor",
+      webapp.app.test_client().get("/browser").status_code == 302)
+check("and opens for the signed link",
+      webapp.app.test_client().get(f"/browser?t={token}").status_code == 200)
+check("the agent can see which sites are already signed in",
+      "signed_in_to" in tools.dispatch("browser_sessions", {}))
+livebrowser.available = _avail
+
 print("\nattachments")
 open(f"{TMP}/note.txt", "w").write("policy 13224640 cancelled")
 check("a saved file is readable", "13224640" in docs.read(f"{TMP}/note.txt")["text"])

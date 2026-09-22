@@ -285,6 +285,17 @@ SCHEMAS = [
                     "returns nothing useful or the page needs a login you have saved.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string"}},
                       "required": ["url"]}},
+    {"name": "browser_login_link",
+     "description": "A link to a browser {owner} can drive from their phone and "
+                    "sign into themselves. Use this for any site with no API — "
+                    "Airbnb, an airline, a bank, a municipality. They log in once, "
+                    "press Keep me signed in, and from then on you can act there "
+                    "with browser_act. Never ask for a password in chat.",
+     "input_schema": {"type": "object", "properties": {
+         "site": {"type": "string", "description": "the site to open, e.g. airbnb.com"}}}},
+    {"name": "browser_sessions",
+     "description": "Which sites the browser is already signed in to.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "browser_act",
      "description": "Drive a real browser: click, fill, press. Use {{secret:NAME}} in a "
                     "fill value to inject a stored credential — you never see it. "
@@ -593,6 +604,21 @@ def execute(name: str, args: dict) -> dict:
         return web.search(args["query"], args.get("limit", 6))
     if name == "web_fetch":
         return web.fetch(args["url"])
+    if name == "browser_login_link":
+        from . import oauth, livebrowser
+        if not livebrowser.available():
+            return {"error": "no browser in this image"}
+        if not config.PUBLIC_URL:
+            return {"error": "no public URL, so no link can be made"}
+        site = (args.get("site") or "").strip()
+        link = f"{config.PUBLIC_URL}/browser?t={oauth.sign('browser')}"
+        return {"url": link, "open_first": site,
+                "note": "valid 30 minutes. They sign in themselves; you never see "
+                        "the password. Tell them to press 'Keep me signed in'."}
+    if name == "browser_sessions":
+        from . import livebrowser
+        return {"signed_in_to": livebrowser.sessions(),
+                "available": livebrowser.available()}
     if name == "browser_read":
         return browser.read(args["url"])
     if name == "browser_act":

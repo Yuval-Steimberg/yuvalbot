@@ -104,6 +104,20 @@ with a live tool count and a remove button.
 For anything else, paste its MCP URL into the One-tap apps card and choose the
 header it wants (`Authorization: Bearer` or `x-api-key`).
 
+## 3b. Sites with no API — Airbnb, airlines, banks
+
+Most services have no API at all. For those the agent uses a browser that stays
+signed in, and **you** do the signing in:
+
+1. Ask the agent, e.g. "connect my Airbnb" — it sends a link
+2. The page shows a live browser. Tap to click, type in the box, press Go
+3. Sign in **yourself**, including two-factor. The agent never sees the password
+4. Press **Keep me signed in**
+
+From then on it can search your bookings, fill forms and act on that site, with
+anything that changes something still gated behind your yes. The saved session
+lives on your volume, encrypted alongside everything else.
+
 ## 4. Nice to have
 
 | what | where |
