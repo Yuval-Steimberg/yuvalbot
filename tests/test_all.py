@@ -540,6 +540,24 @@ res2 = signin._sign_in(w2, "airbnb.com", "me@example.com", "hunter2")
 check("a code prompt asks for the code, not the password",
       res2["stage"] == "needs a verification code"
       and "browser_enter_code" in res2["next"])
+class TapPage(FakePage):
+    def inner_text(self, sel):
+        return ("2-Step Verification\nOpen the Gmail app on your iPhone and tap "
+                "Yes on the prompt, then choose the number:\n51")
+
+
+calls.clear()                      # the fake page remembers the previous submit
+w3 = FakeWorker("done")
+w3._page = TapPage("done")
+res3 = signin._sign_in(w3, "google.com", "me@example.com", "hunter2")
+check("a phone prompt is recognised, not called a failure",
+      "approve on your phone" in res3["stage"])
+check("and the number to tap is passed on", res3["tap_number"] == "51")
+check("Hebrew phone prompts are recognised too",
+      signin._challenged("נשלחה בקשת אישור. לחץ כן ובחר את המספר:\n51")
+      and signin._tap_number("נשלחה בקשת אישור. לחץ כן ובחר את המספר:\n51") == "51")
+check("waiting on the phone books its own re-check",
+      "site_sign_in_status" in brain.SYSTEM)
 check("the prompt tries signing in before handing over a browser",
       "site_sign_in first" in brain.SYSTEM
       and "fallback, not the opener" in brain.SYSTEM)

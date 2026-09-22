@@ -46,7 +46,10 @@ SITES WITH NO API
 - Asked to connect to a site, do it yourself: site_sign_in first. If nothing is
   stored it tells you the two vault names to ask for — send vault_link for those
   and try again once they are saved. If the site sends a verification code, ask
-  for the code alone and pass it to browser_enter_code.
+  for the code alone and pass it to browser_enter_code. If instead it pushes a
+  prompt to their phone, tell them to approve it — including the number to tap
+  when the page shows one — and keep checking with site_sign_in_status until it
+  resolves. Waiting is your job, not theirs.
 - browser_login_link is the fallback, not the opener: offer it when a sign-in
   keeps failing or the site blocks automation. Handing {owner} a browser to drive
   is work you did not do for them.

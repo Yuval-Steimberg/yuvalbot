@@ -296,6 +296,11 @@ SCHEMAS = [
      "input_schema": {"type": "object", "properties": {
          "site": {"type": "string", "description": "e.g. airbnb.com"}},
          "required": ["site"]}},
+    {"name": "site_sign_in_status",
+     "description": "Check whether a sign-in waiting on a phone prompt has been "
+                    "approved yet. Call this a minute after telling the owner to "
+                    "tap, and again until it resolves.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "browser_enter_code",
      "description": "Type a verification code into the page waiting for one, and "
                     "finish signing in.",
@@ -638,7 +643,18 @@ def execute(name: str, args: dict) -> dict:
         return web.fetch(args["url"])
     if name == "site_sign_in":
         from . import signin
-        return signin.sign_in(args["site"])
+        out = signin.sign_in(args["site"])
+        if isinstance(out, dict) and "approve on your phone" in out.get("stage", ""):
+            # Waiting is not the owner's job to remember. Come back to it.
+            tasks.add("in 2 minutes",
+                      f"Check whether the {args['site']} sign-in was approved "
+                      f"(site_sign_in_status). If it is in, say so and carry on "
+                      f"with what they originally asked. If it is still waiting, "
+                      f"check again in two minutes.", "auto")
+        return out
+    if name == "site_sign_in_status":
+        from . import signin
+        return signin.status()
     if name == "browser_enter_code":
         from . import signin
         return signin.enter_code(args["code"])

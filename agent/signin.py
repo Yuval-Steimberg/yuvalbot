@@ -32,6 +32,33 @@ SUBMIT_SELECTORS = ("button[type=submit]", "input[type=submit]",
                     "button:has-text('התחבר')")
 CODE_HINTS = ("verification code", "confirmation code", "one-time", "6-digit",
               "enter the code", "קוד אימות", "קוד אישור")
+# Google and others increasingly push a prompt to the phone instead: "tap Yes and
+# choose the number". Nothing can be typed — the owner has to tap, and the agent
+# has to wait and keep checking.
+TAP_HINTS = ("tap yes", "check your phone", "open the gmail app", "2-step",
+             "choose the number", "sent a notification", "approve the sign-in",
+             "נשלחה בקשה", "בחר את המספר", "אשר את הכניסה", "הקש כן")
+_BIG_NUMBER = re.compile(r"(?<!\d)(\d{1,3})(?!\d)")
+
+
+def _tap_number(body: str) -> str:
+    """The number the owner must match on their phone, if the page shows one."""
+    low = body.lower()
+    for hint in TAP_HINTS:
+        i = low.find(hint)
+        if i == -1:
+            continue
+        window = body[max(0, i - 120): i + 200]
+        nums = [n for n in _BIG_NUMBER.findall(window) if n not in ("2",)]
+        if nums:
+            return nums[-1]
+    nums = _BIG_NUMBER.findall(body[:400])
+    return nums[-1] if nums else ""
+
+
+def _challenged(body: str) -> bool:
+    low = body.lower()
+    return any(h in low for h in TAP_HINTS)
 
 
 def _slug(site: str) -> str:
@@ -99,6 +126,13 @@ def _sign_in(worker, site: str, user: str, pw: str):
 
     body = page.inner_text("body")[:2000]
     low = body.lower()
+    if _challenged(body):
+        number = _tap_number(body)
+        return {"ok": False, "stage": "waiting for you to approve on your phone",
+                "tap_number": number, "url": page.url, "text": body[:300],
+                "next": ("tell the owner to open the prompt on their phone"
+                         + (f" and tap {number}" if number else "")
+                         + ", then check again in a minute with site_sign_in_status")}
     if any(h in low for h in CODE_HINTS):
         return {"ok": False, "stage": "needs a verification code",
                 "url": page.url, "text": body[:400],
@@ -151,3 +185,29 @@ def enter_code(code: str) -> dict:
     if not livebrowser.available():
         return {"error": "no browser in this image"}
     return livebrowser.worker().call(_enter_code, code, timeout=90)
+
+
+def _status(worker):
+    """Has the phone prompt been approved yet?"""
+    page = worker._page
+    page.wait_for_timeout(1500)
+    body = page.inner_text("body")[:2000]
+    if _challenged(body):
+        return {"ok": False, "stage": "still waiting for the phone prompt",
+                "tap_number": _tap_number(body), "url": page.url}
+    if any(h in body.lower() for h in CODE_HINTS):
+        return {"ok": False, "stage": "needs a verification code", "url": page.url,
+                "next": "ask for the code, then browser_enter_code"}
+    still, _ = _first(page, PASS_SELECTORS)
+    if still:
+        return {"ok": False, "stage": "back on the login page — it was not approved",
+                "url": page.url}
+    worker.save_state()
+    return {"ok": True, "stage": "signed in", "url": page.url,
+            "signed_in_to": livebrowser.sessions()[:10]}
+
+
+def status() -> dict:
+    if not livebrowser.available():
+        return {"error": "no browser in this image"}
+    return livebrowser.worker().call(_status, timeout=60)
