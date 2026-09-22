@@ -22,7 +22,21 @@ DB_PATH = Path(os.environ.get("AGENT_DB", DATA_DIR / "agent.db"))
 FILES_DIR = Path(os.environ.get("FILES_DIR", DATA_DIR / "files"))
 VAULT_PATH = Path(os.environ.get("VAULT_PATH", DATA_DIR / "vault.enc"))
 BROWSER_STATE = Path(os.environ.get("BROWSER_STATE", DATA_DIR / "browser_state.json"))
-PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
+def _public_url() -> str:
+    """Where this deployment can be reached from the internet.
+
+    Railway hands us RAILWAY_PUBLIC_DOMAIN once a domain exists, so the Telegram
+    webhook registers itself without anyone having to copy the domain into a
+    second variable — a step that silently leaves the bot deaf when skipped.
+    """
+    explicit = os.environ.get("PUBLIC_URL", "").strip().rstrip("/")
+    if explicit:
+        return explicit if explicit.startswith("http") else f"https://{explicit}"
+    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip().rstrip("/")
+    return f"https://{domain}" if domain else ""
+
+
+PUBLIC_URL = _public_url()
 
 
 def storage_ok() -> tuple[bool, str]:

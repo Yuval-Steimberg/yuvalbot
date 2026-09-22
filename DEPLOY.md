@@ -54,9 +54,12 @@ AUTO_APPROVE=0
 
 1. **Settings → Networking → Generate Domain** → copy it
    (e.g. `https://yuvalbot-production.up.railway.app`)
-2. Add one more variable: `PUBLIC_URL=https://<that domain>`
-3. Redeploy. At boot the agent registers its own Telegram webhook — you do not
-   need to call the Telegram API by hand.
+2. Nothing to copy: Railway exposes the domain as `RAILWAY_PUBLIC_DOMAIN` and the
+   agent registers its own Telegram webhook from it at boot. Set `PUBLIC_URL`
+   only to override that (a custom domain, or a host that is not Railway).
+3. `/api/telegram` reports the webhook state and says what is missing if the bot
+   is not answering; `POST /api/telegram/register` re-registers it without a
+   redeploy.
 
 Check `https://<domain>/health`. You want `"status": "ok"` and
 `"persistent_storage": true`. If storage is false, the volume is not mounted at
@@ -154,7 +157,7 @@ Message the bot, in this order:
 | symptom | cause |
 |---|---|
 | `persistent_storage: false` | volume not mounted at `DATA_DIR` |
-| bot silent, logs show nothing | `PUBLIC_URL` missing or wrong → webhook never registered |
+| bot silent | open `/api/telegram` — it names the cause and what to do. On Railway the public URL is derived from `RAILWAY_PUBLIC_DOMAIN`, so it only breaks if no domain is generated |
 | "Not linked yet" every time | `TELEGRAM_CHAT_ID` not set |
 | every reminder arrives twice | more than one gunicorn worker or replica |
 | gmail tools error | refresh token was minted without the API enabled; redo step 7 |

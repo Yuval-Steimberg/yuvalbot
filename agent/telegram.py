@@ -53,6 +53,17 @@ def set_webhook(public_url: str) -> dict:
     return d
 
 
+def webhook_info() -> dict:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        return {"ok": False, "error": "TELEGRAM_BOT_TOKEN not set"}
+    try:
+        return requests.get(f"https://api.telegram.org/bot{token}/getWebhookInfo",
+                            timeout=20).json()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def parse(update: dict) -> tuple[str, str, str]:
     """(chat_id, text, sender_name) from an incoming update."""
     msg = update.get("message") or update.get("edited_message") or {}

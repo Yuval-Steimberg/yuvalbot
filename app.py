@@ -31,6 +31,10 @@ log.info(f"🧠 agent ready — {config.missing_summary()}")
 
 if telegram.configured() and config.PUBLIC_URL:
     telegram.set_webhook(config.PUBLIC_URL)
+elif telegram.configured():
+    log.error("❗ TELEGRAM_BOT_TOKEN is set but there is no public URL "
+              "(PUBLIC_URL or RAILWAY_PUBLIC_DOMAIN) — the webhook was not "
+              "registered, so the bot cannot hear you.")
 
 
 # ─── auth ─────────────────────────────────────────────────────────────────────
@@ -249,6 +253,42 @@ def api_secrets():
         return jsonify(vault.put(d["name"], d["value"]))
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/telegram")
+@login_required
+def api_telegram():
+    """Why isn't the bot answering? This says so in one call."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat = os.environ.get("TELEGRAM_CHAT_ID", "")
+    info = telegram.webhook_info() if token else {"error": "TELEGRAM_BOT_TOKEN not set"}
+    hooked = (info.get("result") or {}).get("url", "")
+    expected = f"{config.PUBLIC_URL}/webhook/telegram" if config.PUBLIC_URL else ""
+    if not token:
+        verdict = "Set TELEGRAM_BOT_TOKEN (from @BotFather) and redeploy."
+    elif not config.PUBLIC_URL:
+        verdict = ("No public URL. Generate a domain, or set PUBLIC_URL, "
+                   "then redeploy.")
+    elif hooked != expected:
+        verdict = (f"Webhook points at '{hooked or 'nothing'}', expected "
+                   f"'{expected}'. Redeploy to re-register.")
+    elif not chat:
+        verdict = ("Webhook is live. Message the bot on Telegram — it will reply "
+                   "with the TELEGRAM_CHAT_ID to set.")
+    else:
+        verdict = "Fully wired."
+    return jsonify({"token_set": bool(token), "chat_id_set": bool(chat),
+                    "public_url": config.PUBLIC_URL, "expected_webhook": expected,
+                    "telegram_says": info.get("result", info), "verdict": verdict})
+
+
+@app.route("/api/telegram/register", methods=["POST"])
+@login_required
+def api_telegram_register():
+    """Re-register the webhook without a redeploy."""
+    if not config.PUBLIC_URL:
+        return jsonify({"error": "no public URL"}), 400
+    return jsonify(telegram.set_webhook(config.PUBLIC_URL))
 
 
 @app.route("/api/jobs")
