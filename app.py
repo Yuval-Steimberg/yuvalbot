@@ -12,7 +12,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 import agent
 from agent import (brain, consolidate, memory, tasks, approvals, config, vault,
-                   telegram, mcp, jobs, tools, oauth, store)
+                   telegram, mcp, jobs, tools, oauth, store, composio)
 from agent.channels import verify_twilio
 
 logging.basicConfig(level=logging.INFO,
@@ -358,6 +358,48 @@ PROVIDERS = {
 }
 
 
+def _composio_card() -> str:
+    """Composio hands out an API key, not a URL — so find the URL from the key."""
+    key = composio.api_key()
+    if not key:
+        return _card("Composio", "not set up", False, """
+          <p class=note>Sign up at <a href='https://composio.dev' target=_blank
+          style='color:#00ff88'>composio.dev</a>, connect Gmail there (their
+          account chooser — one tap, no Google console), then copy your API key
+          from Settings and paste it here. I will find the MCP endpoint myself.</p>
+          <form method=POST action='/connect/key'>
+            <input type=hidden name=key value=COMPOSIO_API_KEY>
+            <label>Composio API key</label><input name=value required
+              placeholder="ak_...">
+            <button>Save</button></form>""")
+    found = composio.discover()
+    if found.get("ok") and found.get("servers"):
+        rows = "".join(
+            f"<form method=POST action='/connect/hosted' style='margin-top:8px'>"
+            f"<input type=hidden name=name value='composio_{s_['name']}'>"
+            f"<input type=hidden name=url value=\"{s_['url']}\">"
+            f"<input type=hidden name=header value='x-api-key'>"
+            f"<input type=hidden name=token value='{key}'>"
+            f"<div class=note><b>{s_['name']}</b> — {', '.join(s_['toolkits']) or 'tools'}"
+            f" <button style='padding:4px 10px;margin:0'>Link</button></div></form>"
+            for s_ in found["servers"])
+        return _card("Composio", f"{len(found['servers'])} servers found", True,
+                     f"<p class=note>Key saved. Link one:</p>{rows}")
+    detail = found.get("error", "")
+    tried = found.get("tried") or []
+    lines = "".join(f"<div class=note>· {t.get('url')} &rarr; "
+                    f"{t.get('status') or t.get('error')}</div>" for t in tried[:6])
+    return _card("Composio", "key saved, no server yet", False, f"""
+      <p class=note>{detail}. Composio recently replaced per-app MCP servers with
+      sessions, so a dashboard may show only a key. Two ways forward:</p>
+      <form method=POST action='/connect/composio/create'>
+        <label>Let me try creating one</label>
+        <input name=toolkits value="gmail,googlecalendar,googledrive">
+        <button>Create MCP server</button></form>
+      <p class=note>Or paste the URL from Composio's MCP page into the card below,
+      choosing the <b>x-api-key</b> header.</p>{lines}""")
+
+
 def _hosted_card() -> str:
     """The one-tap route: let a connector service own the OAuth dance.
 
@@ -386,14 +428,19 @@ def _hosted_card() -> str:
         <label>Name it</label><input name=name placeholder="gmail" required>
         <label>MCP server URL from the provider</label>
         <input name=url placeholder="https://mcp.composio.dev/..." required>
-        <label>Bearer token, if the URL alone is not enough</label>
+        <label>Key, if the URL alone is not enough</label>
         <input name=token placeholder="optional">
+        <label>Sent as</label>
+        <select name=header>
+          <option value="authorization">Authorization: Bearer (most servers)</option>
+          <option value="x-api-key">x-api-key (Composio)</option>
+        </select>
         <button>Link it</button>
       </form>""")
 
 
 def _connect_html() -> str:
-    body = (_hosted_card() + _google_card() + _telegram_card() + _mcp_card()
+    body = (_composio_card() + _hosted_card() + _google_card() + _telegram_card() + _mcp_card()
             + _key_card("Brave Search", "BRAVE_API_KEY", "BSA...",
                         "Search that does not get rate limited. "
                         "brave.com/search/api, free tier.")
@@ -403,7 +450,7 @@ def _connect_html() -> str:
     return PAGE.format(body=body)
 
 
-SETTABLE = {"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "BRAVE_API_KEY", "SERPER_API_KEY",
+SETTABLE = {"COMPOSIO_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "BRAVE_API_KEY", "SERPER_API_KEY",
             "RESEND_API_KEY", "EMAIL_TO", "EMAIL_FROM", "TWILIO_SID", "TWILIO_TOKEN",
             "YOUR_PHONE", "ANTHROPIC_WORKSPACE_ID"}
 
@@ -500,7 +547,9 @@ def connect_hosted():
         return "a name and an https URL are required", 400
     cfg = {"url": url, "trust": "gated", "hosted": True}
     if token:
-        cfg["headers"] = {"Authorization": f"Bearer {token}"}
+        header = (request.form.get("header") or "authorization").strip().lower()
+        cfg["headers"] = ({"x-api-key": token} if header == "x-api-key"
+                          else {"Authorization": f"Bearer {token}"})
     servers = store.get("mcp_servers", {}) or {}
     servers[name] = cfg
     store.put("mcp_servers", servers)
@@ -509,6 +558,26 @@ def connect_hosted():
     if state.get("error"):
         return (f"Saved, but the server did not answer: {state['error']}<br><br>"
                 f"<a href='/connect'>back</a>"), 200
+    return redirect("/connect")
+
+
+@app.route("/connect/composio/create", methods=["POST"])
+@login_required
+def connect_composio_create():
+    kits = [t.strip() for t in (request.form.get("toolkits") or "gmail").split(",")
+            if t.strip()]
+    made = composio.create("yuvalbot", kits)
+    if not made.get("ok"):
+        return (f"Composio would not create a server: {made.get('error')}<br>"
+                f"<pre style='color:#889;white-space:pre-wrap'>{made.get('tried')}</pre>"
+                f"<a href='/connect'>back</a>"), 200
+    server = made["server"]
+    servers = store.get("mcp_servers", {}) or {}
+    servers[f"composio_{server['name']}"] = {
+        "url": server["url"], "headers": {"x-api-key": composio.api_key()},
+        "trust": "gated", "hosted": True}
+    store.put("mcp_servers", servers)
+    mcp.reload()
     return redirect("/connect")
 
 
