@@ -37,19 +37,36 @@ they did. `/api/mcp` lists connected apps.
 That is it. The deep link carries a single-use code, so the chat links itself and
 nobody else can drive the agent.
 
-## 2. Google — pick one route
+## 2. Apps — Gmail, Calendar, Drive, Notion, Slack and the rest
 
-### Route A: a connector service (fewest steps, they hold the tokens)
+**`/connect`** → the **Apps** card. Once:
 
-1. Sign up at **composio.dev**
-2. Connect **Gmail** there — their account chooser, one tap, no Google console
-3. Copy your **API key** (Settings)
-4. **`/connect`** → Composio card → paste the key → **Save**
-5. The card lists servers to **Link**, or offers **Create MCP server**
+1. Sign up free at [composio.dev](https://composio.dev) → **Settings → API keys** →
+   copy the key
+2. Paste it into the Apps card → **Save**
 
-Gives you: find mail, read threads, draft, send, calendar. Not the bulk jobs.
+Then every app is a button:
 
-### Route B: self-hosted (five console taps, tokens stay on your volume)
+3. Press **Connect** next to Gmail → Google's own account chooser opens → pick
+   your account → allow → you land back here and Gmail shows green
+4. Same for Calendar, Drive, Notion, Slack, Linear, Todoist, GitHub
+5. Press **Enable tools in the agent** once. Done.
+
+No Google console, no client id, no redirect URI, no terminal. The agent will
+message you when the tools go live.
+
+If a session ever expires, the agent notices and remakes it; the **Refresh
+tools** button does the same by hand.
+
+### The one thing this route cannot do
+
+Composio exposes Gmail one message at a time. The bulk jobs — sorting thousands
+of promotions out of your inbox, the year-long subscription sweep, Drive
+de-duplication — need Google's batch API, which is the self-hosted connection
+below. Everything conversational (find, read, draft, send, calendar, contacts)
+works through Composio alone.
+
+### Optional: self-hosted Google (five console taps, tokens stay on your volume)
 
 In console.cloud.google.com, once:
 

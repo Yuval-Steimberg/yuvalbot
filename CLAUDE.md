@@ -20,6 +20,8 @@ agent/
   google.py         Gmail + Calendar + Drive + Contacts over REST, no SDK
   docs.py           text out of PDF / docx / plain files
   oauth.py          browser Google connection + signed tap-to-connect links
+  composio.py       click-through app connections: auth configs, consent links,
+                    tool-router sessions exposed to the MCP client
   store.py          encrypted settings on the volume (browser-supplied secrets)
   mcp.py            MCP client (stdio + streamable HTTP), tools as mcp__<server>__<tool>
   telegram.py channels.py web.py browser.py vault.py llm.py config.py cli.py
@@ -76,6 +78,10 @@ tests/test_all.py   35 end-to-end checks, everything external stubbed
 * **Due dates are compared as strings in sqlite**, so anything that is not an ISO
   UTC timestamp never comes due. `tasks._parse_due` raises `BadDueDate` rather
   than storing something that would silently never fire.
+* **Composio is the default route for apps** — the page drives their v3 API
+  (auth config, `connected_accounts/link`, `tool_router/session` with `mcp: true`)
+  so the user only ever presses buttons. Their endpoints have moved repeatedly,
+  so every call tries the documented shapes and surfaces the failure verbatim.
 * **Anything connectable is connectable from `/connect`** — Google OAuth,
   Telegram (a `t.me` deep link carrying a single-use code), API keys, and MCP
   apps from a catalog. A terminal is never the only route.

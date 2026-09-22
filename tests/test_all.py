@@ -167,6 +167,82 @@ check("a tool call returns content",
       mcp.call("mcp__hosted__GMAIL_FETCH_EMAILS", {}).get("result") == "3 unread")
 srv.shutdown()
 
+print("\ncomposio, clicks only")
+import http.server as _h                                               # noqa: E402
+from agent import composio                                             # noqa: E402
+_STATE = {"auth": {}, "accounts": [], "n": 0}
+
+
+class FakeComposio(_h.BaseHTTPRequestHandler):
+    def _send(self, obj, code=200):
+        p = json.dumps(obj).encode()
+        self.send_response(code); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(p))); self.end_headers()
+        self.wfile.write(p)
+
+    def do_GET(self):
+        if self.headers.get("x-api-key") != "ak_test":
+            return self._send({"error": "bad key"}, 401)
+        if self.path.startswith("/api/v3/auth_configs"):
+            slug = self.path.split("toolkit_slug=")[-1]
+            got = _STATE["auth"].get(slug)
+            return self._send({"items": [{"id": got, "toolkit": {"slug": slug}}]
+                               if got else []})
+        if self.path.startswith("/api/v3/connected_accounts"):
+            return self._send({"items": _STATE["accounts"]})
+        return self._send({}, 404)
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(
+            int(self.headers.get("Content-Length", 0) or 0)) or b"{}")
+        if self.path == "/api/v3/auth_configs":
+            slug = body["toolkit"]["slug"]
+            _STATE["auth"][slug] = f"ac_{slug}"
+            return self._send({"auth_config": {"id": f"ac_{slug}"}})
+        if self.path == "/api/v3/connected_accounts/link":
+            slug = body["auth_config_id"].replace("ac_", "")
+            _STATE["accounts"].append({"id": f"ca_{slug}",
+                                       "toolkit": {"slug": slug}, "status": "ACTIVE"})
+            return self._send({"redirect_url": f"https://consent/{slug}"})
+        if self.path == "/api/v3/tool_router/session":
+            _STATE["n"] += 1
+            sid = f"trs_{_STATE['n']}"
+            return self._send({"session_id": sid, "mcp": {
+                "type": "http",
+                "url": f"https://app.composio.dev/tool_router/v3/{sid}/mcp"}})
+        return self._send({}, 404)
+
+    def log_message(self, *a):
+        pass
+
+
+fake = _h.HTTPServer(("127.0.0.1", 8142), FakeComposio)
+threading.Thread(target=fake.serve_forever, daemon=True).start()
+composio.BASES = ["http://127.0.0.1:8142/api/v3"]
+store.put("composio_api_key", "ak_test")
+check("an app with no auth config gets one made",
+      composio.auth_config_id("gmail") == "ac_gmail")
+url = composio.connect_url("gmail", callback="https://me/connect")
+check("connecting returns the app's own consent screen", url == "https://consent/gmail")
+check("and the account then reads as connected",
+      any(a["toolkit"] == "gmail" and a["status"] == "ACTIVE"
+          for a in composio.accounts()))
+s_ = composio.session()
+check("a tool-router session yields an MCP url",
+      s_["url"].endswith("/mcp") and s_["session_id"].startswith("trs_"))
+_real_reload, _real_status = mcp.reload, mcp.status
+mcp.reload = lambda: {}                       # no live network from the test suite
+mcp.status = lambda: {"composio": {"error": "unreachable from tests", "tools": 0}}
+wired = composio.wire()
+mcp.reload, mcp.status = _real_reload, _real_status
+srv_cfg = (store.get("mcp_servers") or {}).get("composio", {})
+check("the MCP endpoint is stored with the right auth header",
+      srv_cfg.get("headers") == {"x-api-key": "ak_test"}, str(srv_cfg))
+check("an unreachable session is reported, not swallowed", wired.get("ok") is False)
+fake.shutdown()
+store.put("mcp_servers", {})
+mcp.reload()
+
 print("\nconnecting things")
 import app as webapp                                                    # noqa: E402
 c = webapp.app.test_client()

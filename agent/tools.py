@@ -299,9 +299,25 @@ if os.environ.get("ENABLE_SHELL") == "1":
              "command": {"type": "string"}}, "required": ["command"]}})
 
 
+_LAST_REFRESH = [0.0]
+
+
 def all_schemas() -> list[dict]:
-    """Native tools plus whatever the configured MCP servers expose right now."""
+    """Native tools plus whatever the configured MCP servers expose right now.
+
+    Composio's tool-router sessions expire, which would otherwise show up as the
+    agent quietly losing every connected app. Remake the session when it goes
+    bad, at most once a minute.
+    """
+    import time
     try:
+        state = mcp.status().get("composio")
+        if (state and state.get("error") and time.time() - _LAST_REFRESH[0] > 60):
+            _LAST_REFRESH[0] = time.time()
+            from . import composio
+            if composio.configured():
+                log.info("composio session stale, recreating")
+                composio.wire()
         return SCHEMAS + mcp.schemas()
     except Exception as e:
         log.error(f"mcp schema load failed: {e}")

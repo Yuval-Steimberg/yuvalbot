@@ -359,45 +359,52 @@ PROVIDERS = {
 
 
 def _composio_card() -> str:
-    """Composio hands out an API key, not a URL — so find the URL from the key."""
-    key = composio.api_key()
-    if not key:
-        return _card("Composio", "not set up", False, """
-          <p class=note>Sign up at <a href='https://composio.dev' target=_blank
-          style='color:#00ff88'>composio.dev</a>, connect Gmail there (their
-          account chooser — one tap, no Google console), then copy your API key
-          from Settings and paste it here. I will find the MCP endpoint myself.</p>
+    """Apps in one list, each a button. No terminal, no JSON, no console."""
+    if not composio.configured():
+        return _card("Apps", "start here", False, """
+          <p class=note>One key connects everything. Sign up at
+          <a href='https://composio.dev' target=_blank style='color:#00ff88'>
+          composio.dev</a> (free), open <b>Settings &rarr; API keys</b>, copy the
+          key and paste it here. You will not need it again.</p>
           <form method=POST action='/connect/key'>
             <input type=hidden name=key value=COMPOSIO_API_KEY>
-            <label>Composio API key</label><input name=value required
-              placeholder="ak_...">
+            <label>Composio API key</label>
+            <input name=value required placeholder="ak_...">
             <button>Save</button></form>""")
-    found = composio.discover()
-    if found.get("ok") and found.get("servers"):
-        rows = "".join(
-            f"<form method=POST action='/connect/hosted' style='margin-top:8px'>"
-            f"<input type=hidden name=name value='composio_{s_['name']}'>"
-            f"<input type=hidden name=url value=\"{s_['url']}\">"
-            f"<input type=hidden name=header value='x-api-key'>"
-            f"<input type=hidden name=token value='{key}'>"
-            f"<div class=note><b>{s_['name']}</b> — {', '.join(s_['toolkits']) or 'tools'}"
-            f" <button style='padding:4px 10px;margin:0'>Link</button></div></form>"
-            for s_ in found["servers"])
-        return _card("Composio", f"{len(found['servers'])} servers found", True,
-                     f"<p class=note>Key saved. Link one:</p>{rows}")
-    detail = found.get("error", "")
-    tried = found.get("tried") or []
-    lines = "".join(f"<div class=note>· {t.get('url')} &rarr; "
-                    f"{t.get('status') or t.get('error')}</div>" for t in tried[:6])
-    return _card("Composio", "key saved, no server yet", False, f"""
-      <p class=note>{detail}. Composio recently replaced per-app MCP servers with
-      sessions, so a dashboard may show only a key. Two ways forward:</p>
-      <form method=POST action='/connect/composio/create'>
-        <label>Let me try creating one</label>
-        <input name=toolkits value="gmail,googlecalendar,googledrive">
-        <button>Create MCP server</button></form>
-      <p class=note>Or paste the URL from Composio's MCP page into the card below,
-      choosing the <b>x-api-key</b> header.</p>{lines}""")
+
+    try:
+        connected = {a["toolkit"]: a["status"] for a in composio.accounts()}
+        err = ""
+    except Exception as e:
+        connected, err = {}, str(e)[:300]
+
+    rows = []
+    for slug, label in composio.APPS:
+        state = connected.get(slug, "")
+        if state.startswith("ACTIVE") or state == "INITIATED":
+            rows.append(f"<div class=note>🟢 <b>{label}</b> — connected</div>")
+        else:
+            rows.append(
+                f"<div class=note style='display:flex;justify-content:space-between;"
+                f"align-items:center'><span>{label}</span>"
+                f"<a class=btn style='margin:4px 0;padding:6px 14px' "
+                f"href='/connect/composio/go/{slug}'>Connect</a></div>")
+
+    live = mcp.status().get("composio", {})
+    if live and not live.get("error"):
+        tail = (f"<p class=note>🟢 The agent can use these: {live['tools']} tools "
+                f"live.</p><form method=POST action='/connect/composio/wire'>"
+                f"<button class=ghost>Refresh tools</button></form>")
+    else:
+        tail = ("<p class=note>After connecting an app, press this once so the "
+                "agent can see it.</p>"
+                "<form method=POST action='/connect/composio/wire'>"
+                "<button>Enable tools in the agent</button></form>"
+                + (f"<p class=note>{live.get('error')}</p>" if live.get("error") else ""))
+
+    problem = f"<p class=note>Composio said: {err}</p>" if err else ""
+    return _card("Apps", f"{len(connected)} connected", bool(connected),
+                 "".join(rows) + tail + problem)
 
 
 def _hosted_card() -> str:
@@ -558,6 +565,39 @@ def connect_hosted():
     if state.get("error"):
         return (f"Saved, but the server did not answer: {state['error']}<br><br>"
                 f"<a href='/connect'>back</a>"), 200
+    return redirect("/connect")
+
+
+@app.route("/connect/composio/go/<toolkit>")
+@login_required
+def connect_composio_go(toolkit):
+    """Send the user to the app's own consent screen, and bring them back here."""
+    try:
+        url = composio.connect_url(toolkit, callback=f"{config.PUBLIC_URL}/connect")
+    except Exception as e:
+        return (f"<p style='font:15px ui-monospace;color:#ddd;background:#0a0a0f;"
+                f"padding:20px'>Could not start the {toolkit} connection:<br><br>"
+                f"{e}<br><br><a href='/connect' style='color:#00ff88'>back</a></p>"), 200
+    return redirect(url)
+
+
+@app.route("/connect/composio/wire", methods=["POST"])
+@login_required
+def connect_composio_wire():
+    try:
+        out = composio.wire()
+    except Exception as e:
+        out = {"ok": False, "error": str(e)[:400]}
+    if not out.get("ok"):
+        return (f"<p style='font:15px ui-monospace;color:#ddd;background:#0a0a0f;"
+                f"padding:20px'>Could not enable the tools:<br><br>"
+                f"{out.get('error')}<br><br><a href='/connect' "
+                f"style='color:#00ff88'>back</a></p>"), 200
+    try:
+        telegram.send(f"Apps connected — {out['tools']} tools are live. "
+                      f"Ask me about your mail.")
+    except Exception:
+        pass
     return redirect("/connect")
 
 

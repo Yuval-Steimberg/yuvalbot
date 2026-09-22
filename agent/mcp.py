@@ -107,7 +107,7 @@ class Server:
                                  "clientInfo": {"name": "yuvalbot", "version": "1.0"}})
         self._notify("notifications/initialized")
 
-    def _rpc(self, method: str, params: dict | None = None, timeout: int = 60) -> dict:
+    def _rpc(self, method: str, params: dict | None = None, timeout: int = 20) -> dict:
         msg = {"jsonrpc": "2.0", "id": self._next_id(), "method": method,
                "params": params or {}}
         if self.is_http:
@@ -117,7 +117,8 @@ class Server:
                        **self.cfg.get("headers", {})}
             if self.session:
                 headers["Mcp-Session-Id"] = self.session
-            r = requests.post(self.cfg["url"], json=msg, headers=headers, timeout=timeout)
+            r = requests.post(self.cfg["url"], json=msg, headers=headers,
+                              timeout=(8, timeout))
             if r.status_code >= 300:
                 raise RuntimeError(f"{r.status_code}: {r.text[:200]}")
             got = r.headers.get("Mcp-Session-Id") or r.headers.get("mcp-session-id")
