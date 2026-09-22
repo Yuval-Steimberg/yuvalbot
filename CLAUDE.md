@@ -19,6 +19,8 @@ agent/
   approvals.py      pending-action queue; GATED names + MCP writes
   google.py         Gmail + Calendar + Drive + Contacts over REST, no SDK
   docs.py           text out of PDF / docx / plain files
+  oauth.py          browser Google connection + signed tap-to-connect links
+  store.py          encrypted settings on the volume (browser-supplied secrets)
   mcp.py            MCP client (stdio + streamable HTTP), tools as mcp__<server>__<tool>
   telegram.py channels.py web.py browser.py vault.py llm.py config.py cli.py
 scripts/google_setup.py   mints GOOGLE_REFRESH_TOKEN (loopback OAuth)
@@ -69,6 +71,8 @@ DEPLOY.md           the Railway walkthrough — keep it in step with reality
 * **Due dates are compared as strings in sqlite**, so anything that is not an ISO
   UTC timestamp never comes due. `tasks._parse_due` raises `BadDueDate` rather
   than storing something that would silently never fire.
+* **Credentials resolve environment-first, then the encrypted store**, so a
+  browser connection never silently overrides what an operator set explicitly.
 * Every capability degrades honestly: missing credentials disable a tool and are
   reported in `config.capabilities()`, never crash a turn.
 * Prompt changes live in `brain.SYSTEM`. It is the product as much as the code is.

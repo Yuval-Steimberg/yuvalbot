@@ -12,7 +12,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 import agent
 from agent import (brain, consolidate, memory, tasks, approvals, config, vault,
-                   telegram, mcp, jobs, tools)
+                   telegram, mcp, jobs, tools, oauth, store)
 from agent.channels import verify_twilio
 
 logging.basicConfig(level=logging.INFO,
@@ -190,6 +190,145 @@ def index():
     return UI
 
 
+# ─── Connecting accounts from a phone ────────────────────────────────────────
+
+CONNECT_PAGE = """<!DOCTYPE html><html><head><title>Connect accounts</title>
+<meta name=viewport content="width=device-width,initial-scale=1"><style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0a0a0f;color:#dde;font:15px/1.6 ui-monospace,monospace;padding:20px;
+max-width:640px;margin:0 auto}}
+h1{{font-size:20px;color:#fff;margin-bottom:4px}}h1 span{{color:#00ff88}}
+p.sub{{color:#556;font-size:13px;margin-bottom:22px}}
+.card{{border:1px solid #1a1a2e;border-radius:10px;padding:16px;background:#0d0d16;
+margin-bottom:14px}}
+.card h3{{font-size:15px;color:#fff;margin-bottom:4px}}
+.ok{{color:#00ff88}}.off{{color:#667}}
+label{{display:block;color:#889;font-size:12px;margin:10px 0 4px}}
+input{{width:100%;background:#060608;border:1px solid #1a1a2e;color:#fff;padding:11px;
+border-radius:6px;font:inherit;font-size:13px}}
+button,a.btn{{display:inline-block;background:#00ff88;color:#000;border:0;padding:12px 20px;
+border-radius:6px;font:inherit;font-weight:700;cursor:pointer;margin-top:12px;
+text-decoration:none}}
+a.ghost{{background:#151527;color:#aab}}
+ol{{margin:10px 0 0 18px;color:#99a;font-size:13px}}ol li{{margin-bottom:6px}}
+code{{background:#060608;padding:2px 6px;border-radius:4px;color:#00ff88;font-size:12px;
+word-break:break-all}}
+.note{{color:#667;font-size:12px;margin-top:10px}}
+</style></head><body>
+<h1>connect<span>.</span></h1>
+<p class=sub>Gmail, Calendar, Drive and Contacts — one connection.</p>
+
+<div class=card>
+  <h3>Google <span class="{google_class}">{google_state}</span></h3>
+  {google_body}
+</div>
+
+<div class=card>
+  <h3>Everything else</h3>
+  <p class=note>Telegram, search keys and other apps are environment variables on
+  the deployment. The status tab lists what is live.</p>
+  <a class="btn ghost" href="/">back to the agent</a>
+</div>
+</body></html>"""
+
+
+def _connect_html() -> str:
+    cid, secret = oauth.client()
+    if oauth.connected():
+        body = ("<p class=note>Connected. Gmail, Calendar, Drive and Contacts are "
+                "available to the agent.</p>"
+                "<form method=POST action='/connect/google/forget'>"
+                "<button class=ghost>Disconnect</button></form>")
+        return CONNECT_PAGE.format(google_class="ok", google_state="connected",
+                                   google_body=body)
+    if cid and secret:
+        body = (f"<p class=note>Client saved. One tap left — Google will warn that "
+                f"the app is unverified, which is expected for your own project: "
+                f"choose <b>Advanced &rarr; Go to (unsafe)</b>.</p>"
+                f"<a class=btn href='/connect/google'>Connect Google</a>")
+        return CONNECT_PAGE.format(google_class="off", google_state="not connected",
+                                   google_body=body)
+    body = f"""<p class=note>Google will not hand out credentials for someone
+      else's app, so this deployment needs its own OAuth client. Once, from any
+      browser:</p>
+    <ol>
+      <li>console.cloud.google.com &rarr; create a project</li>
+      <li>APIs &amp; Services &rarr; Library: enable <b>Gmail</b>, <b>Calendar</b>,
+          <b>Drive</b> and <b>People</b></li>
+      <li>OAuth consent screen &rarr; External &rarr; add your own Gmail as a test user</li>
+      <li>Credentials &rarr; Create credentials &rarr; OAuth client ID &rarr;
+          <b>Web application</b></li>
+      <li>Authorised redirect URI, exactly:<br><code>{oauth.redirect_uri()}</code></li>
+    </ol>
+    <form method=POST action='/connect/google/client'>
+      <label>Client ID</label><input name=client_id placeholder="....apps.googleusercontent.com" required>
+      <label>Client secret</label><input name=client_secret placeholder="GOCSPX-..." required>
+      <button>Save and continue</button>
+    </form>"""
+    return CONNECT_PAGE.format(google_class="off", google_state="not set up",
+                               google_body=body)
+
+
+def _connect_allowed() -> bool:
+    """The dashboard session, or a signed link the agent sent over Telegram."""
+    if session.get("ok"):
+        return True
+    token = request.args.get("t", "")
+    if token and oauth.verify(token, "connect"):
+        session["ok"] = True          # the link is proof enough, and it expires
+        session.permanent = True
+        return True
+    return False
+
+
+@app.route("/connect")
+def connect_page():
+    if not _connect_allowed():
+        return redirect("/login")
+    return _connect_html()
+
+
+@app.route("/connect/google/client", methods=["POST"])
+@login_required
+def connect_google_client():
+    store.put("google_client_id", request.form.get("client_id", "").strip())
+    store.put("google_client_secret", request.form.get("client_secret", "").strip())
+    return redirect("/connect")
+
+
+@app.route("/connect/google")
+@login_required
+def connect_google():
+    try:
+        return redirect(oauth.auth_url())
+    except Exception as e:
+        return f"Cannot start the Google flow: {e}", 400
+
+
+@app.route("/oauth/google/callback")
+def oauth_google_callback():
+    if request.args.get("error"):
+        return f"Google said: {request.args['error']}", 400
+    if not oauth.verify(request.args.get("state", ""), "google-oauth"):
+        return "That sign-in link expired. Start again from /connect.", 400
+    result = oauth.exchange(request.args.get("code", ""))
+    if not result.get("ok"):
+        return f"Could not finish connecting: {result.get('error')}", 400
+    try:
+        telegram.send("Google is connected — Gmail, Calendar, Drive and Contacts "
+                      "are live. Ask me anything about your mail.")
+    except Exception:
+        pass
+    return redirect("/connect")
+
+
+@app.route("/connect/google/forget", methods=["POST"])
+@login_required
+def connect_google_forget():
+    store.delete("google_refresh_token")
+    return redirect("/connect")
+
+
 # ─── API ──────────────────────────────────────────────────────────────────────
 
 @app.route("/api/chat", methods=["POST"])
@@ -348,6 +487,21 @@ def api_telegram_register():
     if not config.PUBLIC_URL:
         return jsonify({"error": "no public URL"}), 400
     return jsonify(telegram.set_webhook(config.PUBLIC_URL))
+
+
+@app.route("/api/tick", methods=["GET", "POST"])
+@login_required
+def api_tick():
+    """Run the follow-up tick right now and report what it did. If a reminder is
+    not arriving, this says whether it fired and what came back."""
+    before = tasks.due_now(10)
+    try:
+        done = brain.tick()
+        return jsonify({"due_before": before, "ran": done,
+                        "still_pending": tasks.pending(10)})
+    except Exception as e:
+        log.exception("manual tick failed")
+        return jsonify({"due_before": before, "error": f"{type(e).__name__}: {e}"}), 500
 
 
 @app.route("/api/followups")

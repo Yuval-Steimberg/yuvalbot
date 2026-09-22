@@ -75,18 +75,26 @@ def have(*keys) -> bool:
     return all(os.environ.get(k) for k in keys)
 
 
+def google_ready() -> bool:
+    from . import google
+    try:
+        return google.configured()
+    except Exception:
+        return False
+
+
 def capabilities() -> dict:
     from . import browser
     return {
         "llm": have("ANTHROPIC_API_KEY"),
         "whatsapp": have("TWILIO_SID", "TWILIO_TOKEN", "YOUR_PHONE"),
         "email_out": have("RESEND_API_KEY", "EMAIL_TO"),
-        "gmail": have("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"),
-        "calendar": have("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"),
+        "gmail": google_ready(),
+        "calendar": google_ready(),
         "web_search": have("BRAVE_API_KEY") or have("SERPER_API_KEY") or True,
         "telegram": have("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"),
-        "drive": have("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"),
-        "contacts": have("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"),
+        "drive": google_ready(),
+        "contacts": google_ready(),
         "browser": browser.available(),
         "vault": have("VAULT_KEY"),
         "persistent_storage": storage_ok()[0],
@@ -100,11 +108,10 @@ REQUIREMENTS = {
     "whatsapp": "TWILIO_SID + TWILIO_TOKEN + YOUR_PHONE",
     "telegram": "TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID",
     "email_out": "RESEND_API_KEY + EMAIL_TO",
-    "gmail": "GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET + GOOGLE_REFRESH_TOKEN "
-             "(run scripts/google_setup.py)",
-    "calendar": "the same three GOOGLE_* variables as gmail",
-    "drive": "the same three GOOGLE_* variables as gmail",
-    "contacts": "the same three GOOGLE_* variables as gmail",
+    "gmail": "open the /connect page and press Connect Google",
+    "calendar": "open the /connect page and press Connect Google",
+    "drive": "open the /connect page and press Connect Google",
+    "contacts": "open the /connect page and press Connect Google",
     "browser": "the playwright package in the image",
     "vault": "VAULT_KEY",
     "web_search": "BRAVE_API_KEY or SERPER_API_KEY (falls back to DuckDuckGo)",

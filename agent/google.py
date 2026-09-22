@@ -16,21 +16,28 @@ class GoogleError(RuntimeError):
     pass
 
 
+def _cred(name: str, env: str) -> str:
+    """Credentials come from the environment, or from what the browser connected."""
+    from . import store
+    return store.setting(name, env)
+
+
 def configured() -> bool:
-    return all(os.environ.get(k) for k in
-               ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"))
+    return all([_cred("google_client_id", "GOOGLE_CLIENT_ID"),
+                _cred("google_client_secret", "GOOGLE_CLIENT_SECRET"),
+                _cred("google_refresh_token", "GOOGLE_REFRESH_TOKEN")])
 
 
 def _token() -> str:
     if not configured():
-        raise GoogleError("Google not connected (GOOGLE_CLIENT_ID / "
-                          "GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN)")
+        raise GoogleError("Google is not connected yet — open the /connect page "
+                          "and press Connect Google")
     if _TOKEN["value"] and _TOKEN["expires"] > time.time() + 60:
         return _TOKEN["value"]
     r = requests.post("https://oauth2.googleapis.com/token", timeout=25, data={
-        "client_id": os.environ["GOOGLE_CLIENT_ID"],
-        "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
-        "refresh_token": os.environ["GOOGLE_REFRESH_TOKEN"],
+        "client_id": _cred("google_client_id", "GOOGLE_CLIENT_ID"),
+        "client_secret": _cred("google_client_secret", "GOOGLE_CLIENT_SECRET"),
+        "refresh_token": _cred("google_refresh_token", "GOOGLE_REFRESH_TOKEN"),
         "grant_type": "refresh_token"})
     if r.status_code != 200:
         raise GoogleError(f"token refresh failed {r.status_code}: {r.text[:200]}")

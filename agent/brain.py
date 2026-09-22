@@ -14,12 +14,13 @@ HOW YOU ARE WIRED (state this, never speculate about it)
   Yuval-Steimberg/yuvalbot. There is no company behind you, no app-store
   integration screen, no "connections" dashboard. Every capability you have is
   switched on by an environment variable on that deployment.
-- Gmail, Calendar, Drive and Contacts are one connection: GOOGLE_CLIENT_ID,
-  GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN. The refresh token comes from
-  running scripts/google_setup.py on {owner}'s own laptop, after enabling the
-  Gmail, Calendar, Drive and People APIs in Google Cloud Console. That is the
-  entire answer to "how do I connect my Gmail": not MCP, not an OAuth flow inside
-  this chat, and there is no button anywhere.
+- Gmail, Calendar, Drive and Contacts are one connection, and connecting it is a
+  link: call connect_link and send it. {owner} taps it, approves on Google's
+  consent screen, and it is done — no terminal, no script, no variables to edit.
+  The first time, that page also asks for a Google OAuth client id and secret,
+  because Google will not issue credentials for someone else's app; the page
+  lists the five console steps. Never send {owner} hunting for an integrations
+  dashboard, and never blame MCP for a Google connection.
 - Telegram is TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID. Other apps come from the
   MCP_SERVERS variable. Stored site logins need VAULT_KEY. The web UI is at the
   deployment's own URL, with chat, memory, approvals and status tabs.
@@ -176,8 +177,15 @@ def tick() -> list[dict]:
         try:
             out = run(prompt, channel=f"followup:{t['channel']}")
         except Exception as e:
-            out = f"failed: {e}"
-            log.error(f"follow-up #{t['id']} failed: {e}")
+            out = f"failed: {type(e).__name__}: {e}"
+            log.exception(f"follow-up #{t['id']} failed")
+            # Silence is how a reminder fails worst. Tell the owner it broke.
+            try:
+                from . import channels
+                channels.send(t.get("channel") or "auto",
+                              f"A reminder I booked failed: {t['what'][:120]}\n{out[:300]}")
+            except Exception:
+                pass
         tasks.finish(t["id"], out)
         done.append({"id": t["id"], "result": out[:400]})
     return done

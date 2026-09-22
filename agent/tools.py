@@ -260,6 +260,12 @@ SCHEMAS = [
      "description": "Which connected apps (MCP servers) are live and how many "
                     "tools each exposes. Use when an mcp__ tool errors.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "connect_link",
+     "description": "A tap-to-connect link for Google (Gmail, Calendar, Drive, "
+                    "Contacts). Send this when the owner asks how to connect their "
+                    "mail or when a Google tool is unavailable. It expires in 30 "
+                    "minutes and opens the connect page without a password.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "vault_list",
      "description": "Names of stored credentials you may reference as {{secret:NAME}}.",
      "input_schema": {"type": "object", "properties": {}}},
@@ -502,6 +508,12 @@ def execute(name: str, args: dict) -> dict:
         return browser.act(args["url"], args.get("steps") or [])
     if name == "mcp_status":
         return mcp.status()
+    if name == "connect_link":
+        from . import oauth
+        if not config.PUBLIC_URL:
+            return {"error": "no public URL, so no link can be made"}
+        return {"url": oauth.connect_link(),
+                "note": "valid 30 minutes; one tap, then Google's consent screen"}
     if name == "vault_list":
         return {"secrets": vault.names() if os.environ.get("VAULT_KEY") else [],
                 "note": "reference as {{secret:NAME}} in browser_act fill values"}

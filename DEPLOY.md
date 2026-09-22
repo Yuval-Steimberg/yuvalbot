@@ -76,7 +76,21 @@ else's — a bot username is public, so this step is what keeps strangers out.
 
 ## 7. Connect Google (Gmail, Calendar, Drive, Contacts)
 
-On your own laptop, not on Railway:
+**From a browser, including your phone**: open `https://<domain>/connect`, or ask
+the agent "how do I connect my Gmail" and tap the link it sends. The page walks
+through creating a Google OAuth client (five steps in the Google console, which
+cannot be skipped: Google will not issue credentials for someone else's app),
+you paste the client id and secret once, then press **Connect Google** and
+approve. The refresh token is stored encrypted on the volume. Google will warn
+that the app is unverified — expected for your own project: **Advanced > Go to
+(unsafe)**.
+
+The redirect URI to register in the console is exactly
+`https://<domain>/oauth/google/callback`.
+
+`scripts/google_setup.py` still exists for anyone who prefers a terminal, and
+`GOOGLE_*` environment variables still win over anything connected in the
+browser. The old route, on your own laptop:
 
 1. console.cloud.google.com → new project
 2. **APIs & Services → Library**: enable **Gmail API**, **Google Calendar API**,
