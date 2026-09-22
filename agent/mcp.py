@@ -280,10 +280,18 @@ INNER_KEYS = ("tool_slug", "tool_name", "toolSlug", "toolName", "slug", "action"
               "tool", "name")
 
 
+WRAPPER_WORDS = ("execute", "run", "invoke", "call", "workbench", "code",
+                 "bash", "shell", "script", "proxy", "perform")
+
+
 def _is_wrapper(tool: str) -> bool:
-    """Composio has shipped several names for this; all of them say 'execute'."""
+    """A router tool that carries the real action inside its arguments.
+
+    Composio has shipped several of these — execute_tool, multi_execute, a code
+    workbench — so recognise the family rather than a list of names.
+    """
     low = tool.lower()
-    return low in WRAPPERS or "execute" in low
+    return low in WRAPPERS or any(w in low for w in WRAPPER_WORDS)
 
 
 def _inner_tool(args: dict, depth: int = 0) -> str:
@@ -320,6 +328,31 @@ def _inner_tool(args: dict, depth: int = 0) -> str:
     return ""
 
 
+# Composio's router often runs a snippet of code rather than a named action, so
+# the action hides inside a string: composio.tools.execute("GMAIL_FETCH_EMAILS").
+# Pull every toolkit slug out of whatever the arguments contain.
+_SLUG = re.compile(r"\b[A-Z][A-Z0-9]{2,}(?:_[A-Z0-9]+)+\b")
+
+
+def _strings(value, depth: int = 0) -> list[str]:
+    if depth > 4:
+        return []
+    if isinstance(value, str):
+        return [value[:4000]]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v, depth + 1)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v, depth + 1)]
+    return []
+
+
+def _slugs_in(args: dict) -> list[str]:
+    found = []
+    for text in _strings(args):
+        found += _SLUG.findall(text)
+    return found
+
+
 def _classify(name: str) -> bool:
     """True when this name should wait for a human."""
     words = _tool_words(name)
@@ -337,10 +370,28 @@ def needs_approval(tool_name: str, args: dict | None = None) -> bool:
         return True
     if s.trust == "read_only":
         return False
+    # An action named anywhere in the arguments outranks the tool's own name: a
+    # wrapper is only ever as dangerous as what it carries.
+    inner = _inner_tool(args or {})
+    if inner:
+        return _classify(inner)
+    slugs = _slugs_in(args or {})
+    if slugs:
+        return any(_classify(s) for s in slugs)   # one write gates the call
+
     if _is_wrapper(tool):
-        inner = _inner_tool(args or {})
-        # An unnamed action through a wrapper is the one case to be strict about.
-        return _classify(inner) if inner else True
+
+        # No action name anywhere — judge the words of whatever was passed. A
+        # snippet that only reads should not cost an approval every time; a
+        # snippet mentioning send or delete still does.
+        blob = " ".join(_strings(args or {}))[:4000]
+        if blob:
+            words = _tool_words(blob)
+            if words & WRITE_WORDS:
+                return True
+            if words & READ_WORDS:
+                return False
+        return True
     return _classify(tool)
 
 

@@ -224,6 +224,17 @@ for name, args, expect, label in (
         ("COMPOSIO_EXECUTE_TOOL", {"params": {"tool": {"slug": "GMAIL_SEND_EMAIL"}}},
          True, "a deeply nested action is found")):
     check(label, mcp.needs_approval(f"mcp__hosted__{name}", args) is expect)
+for code, expect, label in (
+        ('composio.tools.execute("GMAIL_FETCH_EMAILS")', False,
+         "code that reads mail runs free"),
+        ('composio.tools.execute("GMAIL_SEND_EMAIL")', True,
+         "code that sends mail is gated"),
+        ('msgs = gmail.list_messages(query="in:inbox")', False,
+         "read code without an action name still runs free"),
+        ('gmail.delete_message(id)', True, "delete code is gated"),
+        ('x = 1', True, "code nobody can classify stays gated")):
+    check(label, mcp.needs_approval("mcp__hosted__COMPOSIO_EXECUTE_CODE",
+                                    {"code": code}) is expect)
 check("a nested action name is found too",
       mcp.needs_approval("mcp__hosted__COMPOSIO_EXECUTE_TOOL",
                          {"arguments": {"tool_name": "GMAIL_DELETE_MESSAGE"}}) is True)
