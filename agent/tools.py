@@ -612,6 +612,9 @@ def execute(name: str, args: dict) -> dict:
             return {"error": "no public URL, so no link can be made"}
         site = (args.get("site") or "").strip()
         link = f"{config.PUBLIC_URL}/browser?t={oauth.sign('browser')}"
+        if site:
+            from urllib.parse import quote
+            link += f"&u={quote(site, safe='')}"
         return {"url": link, "open_first": site,
                 "note": "valid 30 minutes. They sign in themselves; you never see "
                         "the password. Tell them to press 'Keep me signed in'."}

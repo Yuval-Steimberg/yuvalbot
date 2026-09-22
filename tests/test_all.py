@@ -379,6 +379,12 @@ check("the browser page refuses an anonymous visitor",
       webapp.app.test_client().get("/browser").status_code == 302)
 check("and opens for the signed link",
       webapp.app.test_client().get(f"/browser?t={token}").status_code == 200)
+check("the link opens on the site the agent named", "&u=airbnb.com" in link["url"])
+page = webapp.app.test_client().get(
+    link["url"].split(".app")[1] if ".app" in link["url"]
+    else f"/browser?t={token}&u=airbnb.com").data.decode()
+check("and the page starts there rather than blank",
+      'value="airbnb.com"' in page and "__START__" not in page)
 check("the agent can see which sites are already signed in",
       "signed_in_to" in tools.dispatch("browser_sessions", {}))
 livebrowser.available = _avail

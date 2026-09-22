@@ -710,7 +710,7 @@ button.g{background:#151527;color:#aab}
 #note{color:#667;font-size:12px;margin:8px 0}
 </style></head><body>
 <div class=bar>
-  <input id=url placeholder="airbnb.com" value="">
+  <input id=url placeholder="airbnb.com" value="__START__">
   <button onclick="go()">Go</button>
   <button class=g onclick="act('back')">←</button>
 </div>
@@ -748,7 +748,14 @@ document.getElementById('shot').onclick=async e=>{
   const r=e.target.getBoundingClientRect();
   const x=(e.clientX-r.left)/r.width*vp.width, y=(e.clientY-r.top)/r.height*vp.height;
   await post('click',{x:x,y:y});shot()};
-shot();setInterval(shot,3000);
+(async()=>{
+  const st=document.getElementById('st');
+  st.textContent='starting the browser…';
+  if(document.getElementById('url').value){await go()}
+  else{await shot()}
+  st.textContent='';
+  setInterval(shot,3000);
+})();
 </script></body></html>"""
 
 
@@ -770,7 +777,8 @@ def browser_page():
     if not livebrowser.available():
         return ("Playwright is not in this image, so there is no browser to drive. "
                 "Rebuild with INSTALL_BROWSER=1."), 200
-    return BROWSER_PAGE
+    start = (request.args.get("u") or "").strip()
+    return BROWSER_PAGE.replace("__START__", start.replace('"', ""))
 
 
 def _bcall(fn, *args, timeout=60):
