@@ -1,0 +1,12 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+.venv
+memory/
+files/
+agent.db
+vault.enc
+browser_state.json
+*.log
+.env

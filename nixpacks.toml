@@ -1,0 +1,11 @@
+# Fallback builder. Railway uses the Dockerfile by default; switch the service to
+# Nixpacks (Settings > Build > Builder) if the Docker build ever fails. You lose
+# browser_read / browser_act and npx-based MCP servers; everything else works.
+[phases.setup]
+nixPkgs = ["python311", "gcc", "git", "nodejs_20"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[start]
+cmd = "gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 300"

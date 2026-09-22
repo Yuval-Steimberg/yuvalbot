@@ -159,6 +159,7 @@ Message the bot, in this order:
 | every reminder arrives twice | more than one gunicorn worker or replica |
 | gmail tools error | refresh token was minted without the API enabled; redo step 7 |
 | `no refresh_token returned` | you already approved this client once — revoke it at myaccount.google.com/permissions and rerun |
-| browser tools unavailable | image built with `INSTALL_BROWSER=0` |
+| browser tools unavailable | image built with `INSTALL_BROWSER=0`, or the service is on the Nixpacks fallback |
+| "The Dockerfile failed validation" | pull the latest `main` — a `VOLUME` instruction and non-ASCII comments tripped Railway's validator. If it still fails, Settings > Build > Builder > **Nixpacks**: everything works except the browser tools and npx MCP servers |
 | MCP server red in status | bad package name, missing token, or it needs a runtime that is not in the image |
 | `MCP_SERVERS` ignored | not valid JSON — the boot log says so |

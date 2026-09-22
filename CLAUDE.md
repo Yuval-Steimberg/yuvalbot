@@ -54,6 +54,9 @@ DEPLOY.md           the Railway walkthrough — keep it in step with reality
 
 ## Conventions
 
+* **The Dockerfile stays plain ASCII and declares no `VOLUME`** — Railway manages
+  the volume and rejects Dockerfiles that declare one. `nixpacks.toml` is the
+  fallback builder (no Chromium, no npx MCP servers).
 * No new dependencies unless unavoidable — Google, Telegram and MCP are all plain
   `requests`. Current deps: flask, gunicorn, apscheduler, requests, cryptography,
   playwright (optional), pypdf.
