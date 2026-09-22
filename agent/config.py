@@ -89,18 +89,31 @@ def google_ready() -> bool:
         return False
 
 
+def via_composio(app: str) -> bool:
+    """True when this app is connected through Composio and its tools are live."""
+    try:
+        from . import composio
+        return composio.live() and app in composio.connected_apps()
+    except Exception:
+        return False
+
+
+def app_ready(app: str) -> bool:
+    return google_ready() or via_composio(app)
+
+
 def capabilities() -> dict:
     from . import browser
     return {
         "llm": have("ANTHROPIC_API_KEY"),
         "whatsapp": have("TWILIO_SID", "TWILIO_TOKEN", "YOUR_PHONE"),
         "email_out": have("RESEND_API_KEY", "EMAIL_TO"),
-        "gmail": google_ready(),
-        "calendar": google_ready(),
+        "gmail": app_ready("gmail"),
+        "calendar": app_ready("googlecalendar"),
         "web_search": have("BRAVE_API_KEY") or have("SERPER_API_KEY") or True,
         "telegram": have("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"),
-        "drive": google_ready(),
-        "contacts": google_ready(),
+        "drive": app_ready("googledrive"),
+        "contacts": app_ready("googlecontacts"),
         "browser": browser.available(),
         "vault": have("VAULT_KEY"),
         "persistent_storage": storage_ok()[0],
@@ -114,7 +127,7 @@ REQUIREMENTS = {
     "whatsapp": "TWILIO_SID + TWILIO_TOKEN + YOUR_PHONE",
     "telegram": "open /connect and link Telegram in two taps",
     "email_out": "a Resend key on /connect",
-    "gmail": "open the /connect page and press Connect Google",
+    "gmail": "connect it on /connect — one button",
     "calendar": "open the /connect page and press Connect Google",
     "drive": "open the /connect page and press Connect Google",
     "contacts": "open the /connect page and press Connect Google",

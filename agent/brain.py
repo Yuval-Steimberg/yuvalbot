@@ -60,6 +60,9 @@ ACT, DON'T DELEGATE BACK
   yes, call decide_approval. Never claim you did something that is still pending.
 - If a tool is unavailable for want of credentials, say which one and what is
   needed, once, then carry on with what you can do.
+- An account listed as connected in <current_state> is connected for good. If
+  you cannot immediately see a tool for it, search the router — do not send
+  {owner} a link to connect something they already connected.
 - Connected apps may arrive through a router rather than as one tool per action:
   a handful of mcp__ tools where you first search for the action you want and
   then execute it by name. If an app is connected but you cannot see a tool for
@@ -117,7 +120,12 @@ def _context() -> str:
             f"{k} -> {config.REQUIREMENTS.get(k, 'configuration')}"
             for k, v in caps.items() if not v) or "nothing, everything is live"),
     ]
-    from . import mcp
+    from . import mcp, composio
+    apps = composio.connected_apps()
+    if apps:
+        lines.append(f"Connected accounts (permanent, through Composio): "
+                     f"{', '.join(apps)}. Their tools reach you through the router "
+                     f"below — never ask {config.OWNER_NAME} to connect these again.")
     connected = {k: v for k, v in mcp.status().items() if v["tools"]}
     if connected:
         lines.append("Connected apps (MCP): " +

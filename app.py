@@ -1087,6 +1087,17 @@ def agent_tick():
         log.error(f"tick error: {e}")
 
 
+def composio_keepalive():
+    """Tool-router sessions expire; the connection behind them does not."""
+    tasks.beat("composio")
+    try:
+        from agent import composio as _c
+        if _c.configured():
+            _c.refresh_if_stale()
+    except Exception as e:
+        log.error(f"composio keepalive failed: {e}")
+
+
 def nightly_consolidation():
     tasks.beat("consolidation")
     try:
@@ -1110,6 +1121,8 @@ def start_scheduler():
               id="tick", replace_existing=True)
     s.add_job(jobs_tick, "interval", seconds=int(os.environ.get("JOB_TICK_SECONDS", "60")),
               id="jobs", replace_existing=True, max_instances=1)
+    s.add_job(composio_keepalive, "interval", minutes=30, id="composio",
+              replace_existing=True, max_instances=1)
     s.add_job(nightly_consolidation, "cron",
               hour=int(os.environ.get("CONSOLIDATE_HOUR_UTC", "3")),
               id="consolidate", replace_existing=True)

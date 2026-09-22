@@ -249,6 +249,19 @@ srv_cfg = (store.get("mcp_servers") or {}).get("composio", {})
 check("the MCP endpoint is stored with the right auth header",
       srv_cfg.get("headers") == {"x-api-key": "ak_test"}, str(srv_cfg))
 check("an unreachable session is reported, not swallowed", wired.get("ok") is False)
+composio.accounts()
+check("connected apps are remembered without a network call",
+      "gmail" in composio.connected_apps())
+_status = mcp.status
+mcp.status = lambda: {"composio": {"tools": 6, "error": ""}}
+check("a Composio-connected app counts as available",
+      config.capabilities()["gmail"] is True)
+check("and the agent is told never to ask for it again",
+      "never ask" in brain._context())
+mcp.status = lambda: {"composio": {"tools": 0, "error": "session expired"}}
+check("an expired session does not fake availability",
+      config.capabilities()["gmail"] is False)
+mcp.status = _status
 fake.shutdown()
 store.put("mcp_servers", {})
 mcp.reload()

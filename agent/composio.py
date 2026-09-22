@@ -157,7 +157,25 @@ def accounts() -> list[dict]:
         out.append({"toolkit": str(slug).lower(),
                     "status": str(row.get("status", "")).upper(),
                     "id": row.get("id") or row.get("uuid", "")})
+    # Cached so the agent knows what is connected without a network call on every
+    # turn — and so it never tells its owner to connect something twice.
+    store.put("composio_connected",
+              sorted({a["toolkit"] for a in out
+                      if a["status"].startswith("ACTIVE") or a["status"] == "INITIATED"}))
     return out
+
+
+def connected_apps() -> list[str]:
+    """Apps connected through Composio, from cache. A connection is permanent;
+    only the session in front of it is short-lived, and that is remade for you."""
+    return store.get("composio_connected", []) or []
+
+
+def live() -> bool:
+    """Is there a working Composio session right now?"""
+    from . import mcp
+    state = mcp.status().get("composio", {})
+    return bool(state) and not state.get("error")
 
 
 # ─── the MCP endpoint the agent actually uses ─────────────────────────────────
