@@ -163,6 +163,46 @@ SCHEMAS = [
          "attendees": {"type": "array", "items": {"type": "string"}}},
          "required": ["summary", "start", "end"]}},
 
+    {"name": "gmail_filters",
+     "description": "List the mailbox's filters — the rules that sort mail "
+                    "automatically from now on.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "gmail_create_filter",
+     "description": "Create a Gmail filter so future mail sorts itself: label it, "
+                    "and optionally keep it out of the inbox. This is what 'from "
+                    "now on' means — triage only fixes today. Needs approval.",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string",
+                   "description": "Gmail search syntax, e.g. 'category:promotions' "
+                                  "or 'from:newsletter@x.com'"},
+         "from_address": {"type": "string"},
+         "subject": {"type": "string"},
+         "label": {"type": "string", "description": "label to apply, created if new"},
+         "skip_inbox": {"type": "boolean", "default": False},
+         "mark_read": {"type": "boolean", "default": False}},
+         "required": ["label"]}},
+    {"name": "gmail_delete_filter",
+     "description": "Remove a filter by id.",
+     "input_schema": {"type": "object", "properties": {"id": {"type": "string"}},
+                      "required": ["id"]}},
+    {"name": "drive_find",
+     "description": "Find Drive files by name fragment or type — use before "
+                    "organising, and tell the owner what you found.",
+     "input_schema": {"type": "object", "properties": {
+         "name_contains": {"type": "string"}, "mime": {"type": "string"},
+         "limit": {"type": "integer", "default": 100}}}},
+    {"name": "drive_folder",
+     "description": "Find or create a Drive folder, optionally inside another.",
+     "input_schema": {"type": "object", "properties": {
+         "name": {"type": "string"}, "parent": {"type": "string"}},
+         "required": ["name"]}},
+    {"name": "drive_move",
+     "description": "Move files into a folder. Nothing is renamed, nothing is "
+                    "deleted, and the move is reversible. Needs approval.",
+     "input_schema": {"type": "object", "properties": {
+         "file_ids": {"type": "array", "items": {"type": "string"}},
+         "folder_id": {"type": "string"}},
+         "required": ["file_ids", "folder_id"]}},
     {"name": "drive_search",
      "description": "Search the owner's Google Drive by full-text content.",
      "input_schema": {"type": "object", "properties": {
@@ -347,6 +387,15 @@ def _summarize(name: str, args: dict) -> str:
         return f"Email {args.get('to')} — “{args.get('subject')}”\n\n{args.get('body','')[:500]}"
     if name == "gmail_reply":
         return f"Reply to message {args.get('message_id')}:\n\n{args.get('body','')[:500]}"
+    if name == "gmail_create_filter":
+        where = (args.get("query") or args.get("from_address")
+                 or args.get("subject") or "?")
+        return (f"From now on, mail matching '{where}' gets the label "
+                f"'{args.get('label')}'"
+                + (" and skips the inbox" if args.get("skip_inbox") else ""))
+    if name == "drive_move":
+        return (f"Move {len(args.get('file_ids') or [])} files into folder "
+                f"{args.get('folder_id')} (nothing renamed or deleted)")
     if name == "gmail_send_draft":
         try:
             d = next((x for x in google.list_drafts(20)["drafts"]
@@ -507,6 +556,31 @@ def execute(name: str, args: dict) -> dict:
     if name == "gmail_bulk_trash":
         ids = google.list_ids(args["query"], "", min(args.get("max", 500), 500))["ids"]
         return google.batch_trash(ids) if ids else {"modified": 0, "note": "nothing matched"}
+
+    if name == "gmail_filters":
+        return google.filters()
+    if name == "gmail_create_filter":
+        criteria = {}
+        if args.get("query"):
+            criteria["query"] = args["query"]
+        if args.get("from_address"):
+            criteria["from"] = args["from_address"]
+        if args.get("subject"):
+            criteria["subject"] = args["subject"]
+        if not criteria:
+            return {"error": "give a query, a sender or a subject to match on"}
+        return google.filter_create(criteria, [args["label"]],
+                                    bool(args.get("skip_inbox")),
+                                    bool(args.get("mark_read")))
+    if name == "gmail_delete_filter":
+        return google.filter_delete(args["id"])
+    if name == "drive_find":
+        return google.drive_find(args.get("name_contains", ""), args.get("mime", ""),
+                                 args.get("limit", 100))
+    if name == "drive_folder":
+        return google.drive_folder(args["name"], args.get("parent"))
+    if name == "drive_move":
+        return google.drive_move(args["file_ids"], args["folder_id"])
 
     if name == "drive_search":
         return google.drive_search(args["query"], args.get("limit", 10))

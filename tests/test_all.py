@@ -127,6 +127,41 @@ jobs._save(w["job_id"], next_run_at=jobs.now()); sent.clear(); jobs.tick()
 check("and speaks up when they reply",
       jobs.get(w["job_id"])["status"] == "done" and any("them@x.com" in b for _, b in sent))
 
+print("\nsorting that lasts, and tidying Drive")
+made = {}
+google.label_id = lambda name, create=True: f"L_{name}"
+google._api = lambda method, url, **kw: (
+    made.update(method=method, url=url, body=kw.get("json"), params=kw.get("params"))
+    or ({"id": "flt_1"} if "filters" in url else
+        {"files": [{"id": "f1", "name": "CV_2026.pdf"}]} if kw.get("params", {}).get("q")
+        else {"id": "fold_1", "name": "Resumes", "parents": ["root"]}))
+out = tools.dispatch("gmail_create_filter", {"query": "category:promotions",
+                                             "label": "Sorted/Promotions",
+                                             "skip_inbox": True})
+check("a filter waits for a yes", out.get("status") == "awaiting_approval")
+check("and the approval says what it will catch",
+      "from now on" in out.get("summary", "").lower(), out.get("summary", ""))
+approvals.decide(out["approval_id"], True)
+check("approving writes a real Gmail filter",
+      made.get("method") == "POST" and "settings/filters" in made.get("url", ""),
+      str(made)[:120])
+check("it labels and takes mail out of the inbox",
+      made["body"]["action"]["addLabelIds"] == ["L_Sorted/Promotions"]
+      and "INBOX" in made["body"]["action"]["removeLabelIds"])
+
+moves = []
+google._api = lambda method, url, **kw: (
+    moves.append((method, url, kw.get("params"))) or
+    ({"parents": ["old"], "name": "CV.pdf"} if method == "GET" else {"id": "x"}))
+mv = tools.dispatch("drive_move", {"file_ids": ["a", "b"], "folder_id": "fold_1"})
+check("moving files waits for a yes", mv.get("status") == "awaiting_approval")
+res = approvals.decide(mv["approval_id"], True)["result"]
+check("and then moves them without deleting anything",
+      res["moved"] == 2 and all(m[0] in ("GET", "PATCH") for m in moves),
+      str(res)[:80])
+check("nothing was renamed",
+      not any("name" in (m[2] or {}) for m in moves if m[0] == "PATCH"))
+
 print("\napps over MCP")
 class Strict(http.server.BaseHTTPRequestHandler):
     SESSION = "s1"

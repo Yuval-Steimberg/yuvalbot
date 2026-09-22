@@ -29,6 +29,19 @@ _ok, _why = config.storage_ok()
 (log.info if _ok else log.error)(f"💾 {_why}")
 log.info(f"🧠 agent ready — {config.missing_summary()}")
 
+def _warm_composio():
+    """Learn what is connected at boot, off the request path."""
+    try:
+        from agent import composio as _c
+        if _c.configured():
+            _c.refresh_connected(force=True)
+            _c.refresh_if_stale()
+    except Exception as e:
+        log.error(f"composio warmup failed: {e}")
+
+
+threading.Thread(target=_warm_composio, daemon=True).start()
+
 if telegram.configured() and config.PUBLIC_URL:
     telegram.set_webhook(config.PUBLIC_URL)
 elif telegram.configured():
@@ -1094,6 +1107,7 @@ def composio_keepalive():
         from agent import composio as _c
         if _c.configured():
             _c.refresh_if_stale()
+            _c.refresh_connected(force=True)
     except Exception as e:
         log.error(f"composio keepalive failed: {e}")
 

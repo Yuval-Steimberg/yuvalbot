@@ -165,6 +165,29 @@ def accounts() -> list[dict]:
     return out
 
 
+_LAST_LOOKUP = [0.0]
+
+
+def refresh_connected(force: bool = False) -> list[str]:
+    """Ask Composio which accounts exist, at most once every few minutes.
+
+    Without this the cache only filled when someone opened the connect page, so
+    a freshly restarted container believed nothing was connected and told its
+    owner to connect Gmail again.
+    """
+    import time
+    if not configured():
+        return []
+    if not force and time.time() - _LAST_LOOKUP[0] < 300:
+        return connected_apps()
+    _LAST_LOOKUP[0] = time.time()
+    try:
+        accounts()
+    except Exception as e:
+        log.info(f"could not refresh connected accounts: {e}")
+    return connected_apps()
+
+
 def connected_apps() -> list[str]:
     """Apps connected through Composio, from cache. A connection is permanent;
     only the session in front of it is short-lived, and that is remade for you."""

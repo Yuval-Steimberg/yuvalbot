@@ -93,7 +93,12 @@ def via_composio(app: str) -> bool:
     """True when this app is connected through Composio and its tools are live."""
     try:
         from . import composio
-        return composio.live() and app in composio.connected_apps()
+        if not composio.live():
+            return False
+        apps = composio.connected_apps()
+        if not apps:                     # cold container: ask once, then cache
+            apps = composio.refresh_connected()
+        return app in apps
     except Exception:
         return False
 

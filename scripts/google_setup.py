@@ -21,7 +21,8 @@ import requests
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify",
           "https://www.googleapis.com/auth/gmail.compose",
           "https://www.googleapis.com/auth/calendar",
-          "https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/gmail.settings.basic",
+          "https://www.googleapis.com/auth/drive",
           "https://www.googleapis.com/auth/contacts.readonly"]
 PORT = int(os.environ.get("OAUTH_PORT", "8765"))
 REDIRECT = f"http://localhost:{PORT}"   # Google killed the out-of-band flow;

@@ -438,3 +438,86 @@ def download_attachment(message_id: str, attachment_id: str, filename: str,
     path.write_bytes(raw)
     log.info(f"📎 saved {path.name} ({len(raw)} bytes)")
     return {"saved": str(path), "bytes": len(raw), "filename": path.name}
+
+
+# ─── filters: sorting that keeps working when nobody is watching ──────────────
+# A one-off triage tidies today's inbox. A filter is the thing that means "from
+# now on", which is what a person actually asks for.
+
+def filters() -> dict:
+    d = _api("GET", f"{GM}/settings/filters")
+    out = []
+    for f in d.get("filter", []):
+        out.append({"id": f.get("id"), "criteria": f.get("criteria", {}),
+                    "action": f.get("action", {})})
+    return {"filters": out}
+
+
+def filter_create(criteria: dict, add_labels: list | None = None,
+                  skip_inbox: bool = False, mark_read: bool = False) -> dict:
+    """criteria: {"from": ..., "to": ..., "subject": ..., "query": ...}"""
+    action = {"addLabelIds": [], "removeLabelIds": []}
+    for name in add_labels or []:
+        action["addLabelIds"].append(label_id(name))
+    if skip_inbox:
+        action["removeLabelIds"].append("INBOX")
+    if mark_read:
+        action["removeLabelIds"].append("UNREAD")
+    d = _api("POST", f"{GM}/settings/filters",
+             json={"criteria": criteria, "action": action})
+    log.info(f"🧲 filter created: {criteria} -> {add_labels}")
+    return {"created": True, "id": d.get("id"), "criteria": criteria,
+            "labels": add_labels or [], "skip_inbox": skip_inbox}
+
+
+def filter_delete(filter_id: str) -> dict:
+    _api("DELETE", f"{GM}/settings/filters/{filter_id}")
+    return {"deleted": filter_id}
+
+
+# ─── Drive: folders and moving files, never renaming or deleting ──────────────
+
+def drive_folder(name: str, parent: str | None = None) -> dict:
+    """Find a folder by name, or make it."""
+    q = (f"name = '{name.replace(chr(39), '')}' and "
+         f"mimeType = 'application/vnd.google-apps.folder' and trashed = false")
+    if parent:
+        q += f" and '{parent}' in parents"
+    found = _api("GET", f"{DRIVE}/files",
+                 params={"q": q, "fields": "files(id,name)"}).get("files", [])
+    if found:
+        return {"id": found[0]["id"], "name": found[0]["name"], "created": False}
+    body = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
+    if parent:
+        body["parents"] = [parent]
+    d = _api("POST", f"{DRIVE}/files", json=body, params={"fields": "id,name"})
+    log.info(f"📁 folder created: {name}")
+    return {"id": d["id"], "name": d.get("name"), "created": True}
+
+
+def drive_move(file_ids: list[str], folder_id: str) -> dict:
+    """Move files into a folder. Nothing is renamed and nothing is deleted."""
+    moved, failed = [], []
+    for fid in file_ids[:200]:
+        try:
+            meta = _api("GET", f"{DRIVE}/files/{fid}", params={"fields": "parents,name"})
+            old = ",".join(meta.get("parents", []))
+            _api("PATCH", f"{DRIVE}/files/{fid}",
+                 params={"addParents": folder_id, "removeParents": old,
+                         "fields": "id,parents"})
+            moved.append(meta.get("name", fid))
+        except GoogleError as e:
+            failed.append({"id": fid, "error": str(e)[:120]})
+    return {"moved": len(moved), "names": moved[:50], "failed": failed}
+
+
+def drive_find(name_contains: str = "", mime: str = "", limit: int = 100) -> dict:
+    parts = ["trashed = false"]
+    if name_contains:
+        parts.append(f"name contains '{name_contains.replace(chr(39), '')}'")
+    if mime:
+        parts.append(f"mimeType = '{mime}'")
+    d = _api("GET", f"{DRIVE}/files", params={
+        "q": " and ".join(parts), "pageSize": min(limit, 200),
+        "fields": "files(id,name,mimeType,modifiedTime,size,parents,webViewLink)"})
+    return {"files": d.get("files", [])}

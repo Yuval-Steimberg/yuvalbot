@@ -8,7 +8,7 @@ log = logging.getLogger("yuvalbot.approvals")
 
 # Tools that reach outside the box or spend money.
 GATED = {"send_email", "gmail_send", "gmail_reply", "calendar_create_event",
-         "browser_act", "shell", "gmail_bulk_trash", "gmail_send_draft"}
+         "browser_act", "shell", "gmail_bulk_trash", "gmail_send_draft", "gmail_create_filter", "drive_move"}
 
 
 def _con():
