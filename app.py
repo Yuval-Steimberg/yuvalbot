@@ -23,6 +23,8 @@ log = logging.getLogger("yuvalbot")
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change-me")
 
+BOOT_TIME = __import__("time").time()
+
 agent.boot()
 
 _ok, _why = config.storage_ok()
@@ -30,12 +32,21 @@ _ok, _why = config.storage_ok()
 log.info(f"🧠 agent ready — {config.missing_summary()}")
 
 def _warm_composio():
-    """Learn what is connected at boot, off the request path."""
+    """Learn what is connected at boot, and rebuild the session if it is gone.
+
+    With COMPOSIO_API_KEY in the environment this survives losing the volume
+    entirely: Composio still holds the accounts, so the agent re-wires itself
+    without anyone pressing anything.
+    """
     try:
         from agent import composio as _c
         if _c.configured():
             _c.refresh_connected(force=True)
-            _c.refresh_if_stale()
+            if not _c.live():
+                log.info("no Composio session — creating one")
+                log.info(f"composio wire: {_c.wire()}")
+            else:
+                _c.refresh_if_stale()
     except Exception as e:
         log.error(f"composio warmup failed: {e}")
 
@@ -764,6 +775,16 @@ def api_ready():
 
     checks = {}
     ok, why = config.storage_ok()
+    try:
+        files = sum(1 for _ in config.DATA_DIR.rglob("*") if _.is_file())
+        db_kb = int(config.DB_PATH.stat().st_size / 1024) if config.DB_PATH.exists() else 0
+        why = (f"{why}; {files} files, db {db_kb}KB, "
+               f"{memory.stats()['commits']} memory commits, "
+               f"uptime {int(_t.time() - BOOT_TIME)}s"
+               if False else
+               f"{why}; {files} files on it, db {db_kb}KB")
+    except Exception as e:
+        why = f"{why} (could not inspect: {e})"
     checks["storage"] = {"ok": ok, "detail": why}
     checks["model"] = {"ok": caps["llm"], "detail": config.MODEL if caps["llm"]
                        else "ANTHROPIC_API_KEY missing or rejected"}
@@ -773,16 +794,24 @@ def api_ready():
     reachable = [k for k in ("telegram", "whatsapp", "email_out") if caps[k]]
     checks["can_reach_you"] = {"ok": bool(reachable),
                                "detail": ", ".join(reachable) or "no outbound channel"}
-    tick_age = age("followups")
-    checks["scheduler"] = {
-        "ok": tick_age is not None and tick_age < 600,
-        "detail": (f"last follow-up tick {tick_age}s ago" if tick_age is not None
-                   else "has never run — reminders will not fire")}
-    jobs_age = age("jobs")
-    checks["job_runner"] = {
-        "ok": jobs_age is not None and jobs_age < 600,
-        "detail": (f"last job slice {jobs_age}s ago" if jobs_age is not None
-                   else "has never run — background jobs will not progress")}
+    import time as _t
+    uptime = int(_t.time() - BOOT_TIME)
+    warming = uptime < 180          # the loops have not had a chance to run yet
+
+    def loop_check(name, label, never):
+        secs = age(name)
+        if secs is not None:
+            return {"ok": secs < 600, "detail": f"last {label} {secs}s ago"}
+        if warming:
+            return {"ok": True, "detail": f"starting up ({uptime}s) — first {label} "
+                                          f"has not come round yet"}
+        return {"ok": False, "detail": never}
+
+    checks["scheduler"] = loop_check("followups", "follow-up tick",
+                                     "has never run — reminders will not fire")
+    checks["job_runner"] = loop_check("jobs", "job slice",
+                                      "has never run — background jobs will not "
+                                      "progress")
     checks["mail"] = {"ok": caps["gmail"],
                       "detail": "Gmail, Calendar, Drive, Contacts"
                                 if caps["gmail"] else

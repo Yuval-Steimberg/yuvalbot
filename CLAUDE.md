@@ -86,7 +86,12 @@ tests/test_all.py   35 end-to-end checks, everything external stubbed
   Telegram (a `t.me` deep link carrying a single-use code), API keys, and MCP
   apps from a catalog. A terminal is never the only route.
 * **Credentials resolve environment-first, then the encrypted store**, so a
-  browser connection never silently overrides what an operator set explicitly.
+  browser connection never silently overrides what an operator set explicitly —
+  and a key in the environment is the only thing that survives losing the volume.
+  Decryption tries every key the deployment might have used, because preferring a
+  newly added VAULT_KEY once orphaned everything written under SECRET_KEY.
+* **Readiness has a warm-up window**: a loop that has not ticked within three
+  minutes of boot is starting, not dead.
 * **Text handling is unicode, not ASCII.** The owner writes Hebrew; an ASCII
   tokenizer makes search silently return nothing.
 * **Scheduled loops call `tasks.beat()`**, so `/api/ready` can tell a dead

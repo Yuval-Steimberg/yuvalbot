@@ -17,7 +17,8 @@ Five things must be green, and it names any that are not:
 
 | check | what it means if red |
 |---|---|
-| `storage` | no volume at `/data` — memory dies on every deploy |
+| `storage` | no volume at `/data` — memory dies on every deploy. The detail line counts the files on it: a volume that suddenly holds almost nothing was replaced, not corrupted |
+| `saved_settings` | connections saved in the browser are unreadable or gone |
 | `model` | `ANTHROPIC_API_KEY` missing or rejected |
 | `can_reach_you` | no Telegram, WhatsApp or email — it cannot message you first |
 | `scheduler` | the follow-up loop has not run — **reminders will not fire** |
@@ -44,6 +45,12 @@ nobody else can drive the agent.
 1. Sign up free at [composio.dev](https://composio.dev) → **Settings → API keys** →
    copy the key
 2. Paste it into the Apps card → **Save**
+
+   **Better: also put it in Railway as `COMPOSIO_API_KEY`.** Everything saved
+   through the browser lives on the volume; an environment variable does not. With
+   the key in the environment the agent rebuilds its session by itself after a
+   restart or even a lost volume — Composio still holds your accounts, so nothing
+   needs reconnecting.
 
 Then every app is a button:
 
