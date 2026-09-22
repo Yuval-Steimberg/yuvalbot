@@ -429,12 +429,26 @@ check("that link cannot be reused for the browser",
 vc = webapp.app.test_client()
 check("the vault page refuses an anonymous visitor", vc.get("/vault").status_code == 302)
 page = vc.get(f"/vault?t={vtoken}&for=airbnb_password").data.decode()
-check("and suggests the name the agent asked for", "AIRBNB_PASSWORD" in page)
+check("and prefills the service the agent asked about",
+      'value="airbnb"' in page and "Save login" in page)
 vc.post("/vault/add", data={"name": "airbnb password", "value": "hunter2"})
 check("the secret is stored under a tidy name", "AIRBNB_PASSWORD" in vault.names())
 check("the page never shows the value back", "hunter2" not in vc.get("/vault").data.decode())
 check("the agent can use it without seeing it",
       vault.fill("pw={{secret:AIRBNB_PASSWORD}}") == "pw=hunter2")
+from agent import signin as _signin                                    # noqa: E402
+vc.post("/vault/login", data={"service": "airbnb.com", "username": "me@x.com",
+                              "password": "pw123"})
+check("a login is stored under the names the sign-in looks for",
+      _signin.credentials("airbnb.com")[:2] == ("me@x.com", "pw123"))
+check("saving a login books an immediate retry",
+      any("was just saved in the vault" in t["what"] for t in tasks.pending()))
+check("the vault page groups logins and hides values",
+      "AIRBNB" in vc.get("/vault").data.decode()
+      and "pw123" not in vc.get("/vault").data.decode())
+check("settings shows what it knows", b"records" in vc.get("/settings").data)
+check("forgetting everything needs the word",
+      vc.post("/settings/forget", data={"confirm": "no"}).status_code == 302)
 check("the prompt forbids asking for secrets in chat",
       "Never ask for a password" in brain.SYSTEM)
 check("and requires a follow-up on anything blocked",
@@ -445,6 +459,8 @@ from agent import signin                                               # noqa: E
 check("the vault name matches what a person would pick",
       signin.credentials("https://www.airbnb.com/login")[2]
       == ["AIRBNB_EMAIL", "AIRBNB_PASSWORD"])
+for _n in ("AIRBNB_EMAIL", "AIRBNB_PASSWORD"):   # the vault section stored these
+    vault.delete(_n)
 without = signin.sign_in("airbnb.com")
 check("with nothing stored it names the two secrets to ask for",
       without["need"] == ["AIRBNB_EMAIL", "AIRBNB_PASSWORD"])

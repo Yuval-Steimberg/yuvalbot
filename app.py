@@ -850,34 +850,50 @@ h1{{font-size:20px;color:#fff}}h1 span{{color:#00ff88}}
 p.sub{{color:#556;font-size:13px;margin-bottom:20px}}
 .card{{border:1px solid #1a1a2e;border-radius:10px;padding:16px;background:#0d0d16;
 margin-bottom:14px}}
+.card h3{{color:#fff;font-size:15px;margin-bottom:8px}}
 label{{display:block;color:#889;font-size:12px;margin:10px 0 4px}}
 input{{width:100%;background:#060608;border:1px solid #1a1a2e;color:#fff;padding:11px;
 border-radius:6px;font:inherit;font-size:13px}}
 button{{background:#00ff88;color:#000;border:0;padding:11px 18px;border-radius:6px;
 font:inherit;font-weight:700;font-size:13px;cursor:pointer;margin-top:12px}}
 button.g{{background:#151527;color:#aab;padding:5px 11px;margin:0}}
+a.btn{{display:inline-block;background:#151527;color:#00ff88;padding:11px 18px;
+border-radius:6px;text-decoration:none;font-size:13px;margin-top:12px}}
 .note{{color:#667;font-size:12px;margin-top:8px}}
 .row{{display:flex;justify-content:space-between;align-items:center;color:#9aa;
 font-size:13px;padding:5px 0}}
 </style></head><body>
 <h1>vault<span>.</span></h1>
-<p class=sub>Stored encrypted on your own server. The agent uses these by name
-and never sees the value — not in chat, not in its own transcript.</p>
+<p class=sub>Encrypted on your own server. The agent uses these by name and never
+sees a value — not in chat, not in its transcript.</p>
+
 <div class=card>
-  <h3 style="color:#fff;font-size:15px">Stored</h3>
-  {rows}
+  <h3>Logins</h3>
+  {logins}
+  <form method=POST action='/vault/login'>
+    <label>Service</label><input name=service required placeholder="airbnb.com"
+      value="{suggest_service}">
+    <label>Username or email</label><input name=username required>
+    <label>Password</label><input name=password type=password required>
+    <button>Save login</button>
+  </form>
 </div>
+
 <div class=card>
+  <h3>Personal details</h3>
+  {personal}
+  <p class=note>Passport number, ID, address — things forms ask for.</p>
   <form method=POST action='/vault/add'>
-    <label>What it is for</label>
-    <input name=name required placeholder="AIRBNB_PASSWORD" value="{suggest}">
-    <label>The value</label>
-    <input name=value type=password required placeholder="••••••••">
+    <label>What it is</label><input name=name required placeholder="PASSPORT_NUMBER">
+    <label>Value</label><input name=value type=password required>
     <button>Save</button>
   </form>
-  <p class=note>{state}</p>
 </div>
-<div class=card><a href="/" style="color:#00ff88;text-decoration:none">back</a></div>
+
+<div class=card>
+  <p class=note>{state}</p>
+  {back}
+</div>
 </body></html>"""
 
 
@@ -892,6 +908,17 @@ def _vault_allowed() -> bool:
     return False
 
 
+def _vault_rows(names, kind):
+    rows = []
+    for n in names:
+        rows.append(
+            f"<div class=row><span>🔐 {n}</span>"
+            f"<form method=POST action='/vault/delete' style='margin:0'>"
+            f"<input type=hidden name=name value='{n}'>"
+            f"<button class=g>remove</button></form></div>")
+    return "".join(rows) or f"<p class=note>No {kind} saved yet.</p>"
+
+
 @app.route("/vault")
 def vault_page():
     if not _vault_allowed():
@@ -901,14 +928,58 @@ def vault_page():
         state = "Encrypted with your VAULT_KEY."
     except Exception as e:
         names, state = [], f"Cannot open the vault: {e}"
-    rows = "".join(
-        f"<div class=row><span>🔐 {n}</span>"
-        f"<form method=POST action='/vault/delete' style='margin:0'>"
-        f"<input type=hidden name=name value='{n}'>"
-        f"<button class=g>remove</button></form></div>" for n in names) \
-        or "<p class=note>Nothing stored yet.</p>"
-    return VAULT_PAGE.format(rows=rows, state=state,
-                             suggest=(request.args.get("for") or "").upper())
+    logins = sorted({n.rsplit("_", 1)[0] for n in names
+                     if n.endswith(("_PASSWORD", "_EMAIL", "_USERNAME"))})
+    personal = [n for n in names
+                if not n.endswith(("_PASSWORD", "_EMAIL", "_USERNAME"))]
+    bot = ""
+    try:
+        bot = (telegram.me().get("result") or {}).get("username", "")
+    except Exception:
+        pass
+    back = (f"<a class=btn href='https://t.me/{bot}'>Back to the chat</a>" if bot
+            else "<a class=btn href='/'>back</a>")
+    return VAULT_PAGE.format(
+        logins=_vault_rows(logins, "logins"),
+        personal=_vault_rows(personal, "details"),
+        state=state, back=back,
+        suggest_service=(request.args.get("for") or "").lower()
+        .replace("_password", "").replace("_email", ""))
+
+
+def _resume(what: str):
+    """Tell the agent the thing it was waiting for has arrived, and let the
+    follow-up loop pick the task straight back up."""
+    try:
+        tasks.add("in 1 minutes",
+                  f"{what} was just saved in the vault. Retry whatever was blocked "
+                  f"on it — sign in, finish the errand — and tell the owner the "
+                  f"result. Do not ask them for anything you now have.",
+                  "auto")
+    except Exception as e:
+        log.error(f"could not book the resume: {e}")
+
+
+@app.route("/vault/login", methods=["POST"])
+@login_required
+def vault_login():
+    from agent.signin import _slug
+    service = (request.form.get("service") or "").strip()
+    base = _slug(service)
+    if not base:
+        return redirect("/vault")
+    try:
+        vault.put(f"{base}_EMAIL", (request.form.get("username") or "").strip())
+        vault.put(f"{base}_PASSWORD", request.form.get("password") or "")
+    except Exception as e:
+        return f"Could not save: {e}<br><a href='/vault'>back</a>", 200
+    _resume(f"The login for {service}")
+    try:
+        telegram.send(f"Saved the {service} login. Signing in now — I will tell you "
+                      f"how it goes.")
+    except Exception:
+        pass
+    return redirect("/vault")
 
 
 @app.route("/vault/add", methods=["POST"])
@@ -922,9 +993,9 @@ def vault_add():
         vault.put(name, value)
     except Exception as e:
         return f"Could not save: {e}<br><a href='/vault'>back</a>", 200
+    _resume(name)
     try:
-        telegram.send(f"Saved {name} in the vault. I will use it without ever "
-                      f"seeing it.")
+        telegram.send(f"Saved {name}. Picking up where I left off.")
     except Exception:
         pass
     return redirect("/vault")
@@ -935,6 +1006,120 @@ def vault_add():
 def vault_delete():
     vault.delete((request.form.get("name") or "").strip())
     return redirect("/vault")
+
+
+# ─── Settings and data controls ──────────────────────────────────────────────
+
+SETTINGS_PAGE = """<!DOCTYPE html><html><head><title>Settings</title>
+<meta name=viewport content="width=device-width,initial-scale=1"><style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0a0a0f;color:#dde;font:15px/1.6 ui-monospace,monospace;padding:20px;
+max-width:620px;margin:0 auto}}
+h1{{font-size:20px;color:#fff;margin-bottom:18px}}h1 span{{color:#00ff88}}
+.card{{border:1px solid #1a1a2e;border-radius:10px;padding:16px;background:#0d0d16;
+margin-bottom:14px}}
+.card h3{{color:#fff;font-size:15px;margin-bottom:4px}}
+label{{display:block;color:#889;font-size:12px;margin:10px 0 4px}}
+input,select{{width:100%;background:#060608;border:1px solid #1a1a2e;color:#fff;
+padding:11px;border-radius:6px;font:inherit;font-size:13px}}
+button{{background:#00ff88;color:#000;border:0;padding:11px 18px;border-radius:6px;
+font:inherit;font-weight:700;font-size:13px;cursor:pointer;margin-top:12px}}
+button.danger{{background:#2a1a1e;color:#f77}}
+.note{{color:#667;font-size:12px;margin-top:8px}}
+a{{color:#00ff88;text-decoration:none}}
+</style></head><body>
+<h1>settings<span>.</span></h1>
+
+<div class=card>
+  <h3>You</h3>
+  <form method=POST action='/settings/save'>
+    <label>Name the agent calls you</label>
+    <input name=OWNER_NAME value="{owner}">
+    <label>Timezone</label>
+    <input name=TIMEZONE value="{tz}" placeholder="Asia/Jerusalem">
+    <label>Daily review (1 on, 0 off)</label>
+    <input name=DAILY_BRIEF value="{brief}">
+    <button>Save</button>
+  </form>
+  <p class=note>A value set in the deployment's variables wins over this page.</p>
+</div>
+
+<div class=card>
+  <h3>Where it reaches you</h3>
+  <p class=note>{channel}</p>
+  <p class=note><a href='/connect'>connect apps</a> ·
+    <a href='/vault'>vault</a> · <a href='/'>chat</a></p>
+</div>
+
+<div class=card>
+  <h3>What it knows</h3>
+  <p class=note>{memory}</p>
+  <form method=POST action='/settings/forget'>
+    <label>Delete every memory record, follow-up and stored setting. Type FORGET
+      to confirm.</label>
+    <input name=confirm placeholder="FORGET">
+    <button class=danger>Forget everything</button>
+  </form>
+  <p class=note>Connections at Composio and Google are not touched; remove those
+    where you granted them.</p>
+</div>
+</body></html>"""
+
+
+@app.route("/settings")
+@login_required
+def settings_page():
+    caps = config.capabilities()
+    reach = [k for k in ("telegram", "whatsapp", "email_out") if caps[k]]
+    st = memory.stats()
+    return SETTINGS_PAGE.format(
+        owner=config.OWNER_NAME, tz=config.TIMEZONE,
+        brief=os.environ.get("DAILY_BRIEF", store.store_str("daily_brief") or "1"),
+        channel=("reaches you on " + ", ".join(reach)) if reach
+                else "no outbound channel yet",
+        memory=(f"{sum(v for k, v in st.items() if k != 'commits')} records, "
+                f"{st['commits']} commits, {len(tasks.pending())} follow-ups "
+                f"pending"))
+
+
+@app.route("/settings/save", methods=["POST"])
+@login_required
+def settings_save():
+    for key in ("OWNER_NAME", "TIMEZONE", "DAILY_BRIEF"):
+        val = (request.form.get(key) or "").strip()
+        if val:
+            store.put(key.lower(), val)
+    return redirect("/settings")
+
+
+@app.route("/settings/forget", methods=["POST"])
+@login_required
+def settings_forget():
+    if (request.form.get("confirm") or "").strip().upper() != "FORGET":
+        return redirect("/settings")
+    import shutil, sqlite3
+    removed = []
+    try:
+        shutil.rmtree(config.MEMORY_DIR, ignore_errors=True)
+        memory.init()
+        removed.append("memory")
+    except Exception as e:
+        log.error(f"could not clear memory: {e}")
+    try:
+        con = sqlite3.connect(config.DB_PATH)
+        for table in ("tasks", "turns", "approvals", "jobs", "settings"):
+            try:
+                con.execute(f"DELETE FROM {table}")
+            except Exception:
+                pass
+        con.commit(); con.close()
+        removed.append("history and settings")
+    except Exception as e:
+        log.error(f"could not clear the database: {e}")
+    log.warning("🧹 owner cleared everything from settings")
+    return (f"<body style='background:#0a0a0f;color:#dde;font:15px ui-monospace;"
+            f"padding:24px'>Cleared: {', '.join(removed)}. "
+            f"<a href='/' style='color:#00ff88'>start again</a></body>"), 200
 
 
 # ─── API ──────────────────────────────────────────────────────────────────────
