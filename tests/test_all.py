@@ -588,6 +588,13 @@ google.list_ids = lambda q, p="", n=25: {"ids": []}
 check("an empty mailbox says so instead of inventing someone",
       contacts.find("nowhere")["people"] == [])
 google.configured, google.list_ids, google.headers_of = _conf, _ids, _heads
+for phrase, label in (
+        ("who they are to the recipient", "a letter states the relationship"),
+        ("numbered, specific asks", "asks are numbered and specific"),
+        ("one line of leverage", "there is a line of leverage"),
+        ("should anyone be copied", "it offers who to copy in"),
+        ("two plausible targets exist", "one question only when it changes the work")):
+    check(label, phrase in brain.SYSTEM)
 check("the prompt forbids asking for what is in the inbox",
       "statement about your memory, not about the world" in brain.SYSTEM)
 check("and says a request to somebody is an email, not a login",
