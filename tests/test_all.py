@@ -71,6 +71,14 @@ done = approvals.decide(gated["approval_id"], True)
 check("approving executes the stored call", done.get("result", {}).get("sent") is True)
 check("reading is not gated", tools._needs_approval("gmail_search", {}) is False)
 
+gated_twice_a = tools.dispatch("gmail_send", {"to": "x@y.com", "subject": "s",
+                                              "body": "b"})
+gated_twice_b = tools.dispatch("gmail_send", {"to": "x@y.com", "subject": "s",
+                                              "body": "b"})
+check("asking for the same approval twice reuses the first",
+      gated_twice_a["approval_id"] == gated_twice_b["approval_id"])
+approvals.decide(gated_twice_a["approval_id"], False)
+
 print("\njobs")
 state = {"promotions": 2500, "tripped": False}
 def list_ids(q, page="", size=500):
@@ -205,6 +213,17 @@ for inner, expect, label in (
     args = {"tool_slug": inner} if inner else {}
     check(label, mcp.needs_approval("mcp__hosted__COMPOSIO_EXECUTE_TOOL", args)
           is expect)
+for name, args, expect, label in (
+        ("COMPOSIO_REMOTE_EXECUTE_TOOL", {"arguments": {"tool_slug": "GMAIL_FETCH_EMAILS"}},
+         False, "a differently named wrapper is still recognised"),
+        ("COMPOSIO_MULTI_EXECUTE_TOOL", {"tools": [{"tool_slug": "GMAIL_FETCH_EMAILS"}]},
+         False, "a batch of reads runs free"),
+        ("COMPOSIO_MULTI_EXECUTE_TOOL",
+         {"tools": [{"tool_slug": "GMAIL_FETCH_EMAILS"}, {"tool_slug": "GMAIL_SEND_EMAIL"}]},
+         True, "one write in a batch gates the whole batch"),
+        ("COMPOSIO_EXECUTE_TOOL", {"params": {"tool": {"slug": "GMAIL_SEND_EMAIL"}}},
+         True, "a deeply nested action is found")):
+    check(label, mcp.needs_approval(f"mcp__hosted__{name}", args) is expect)
 check("a nested action name is found too",
       mcp.needs_approval("mcp__hosted__COMPOSIO_EXECUTE_TOOL",
                          {"arguments": {"tool_name": "GMAIL_DELETE_MESSAGE"}}) is True)

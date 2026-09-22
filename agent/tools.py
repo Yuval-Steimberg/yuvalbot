@@ -381,7 +381,7 @@ def _expand(query: str) -> list[str]:
 def _summarize(name: str, args: dict) -> str:
     if mcp.is_mcp(name):
         server, tool = mcp.split(name)
-        inner = mcp._inner_tool(args) if tool.lower() in mcp.WRAPPERS else ""
+        inner = mcp._inner_tool(args) if mcp._is_wrapper(tool) else ""
         return f"[{server}] {inner or tool} — {json.dumps(args)[:400]}"
     if name in ("gmail_send",):
         return f"Email {args.get('to')} — “{args.get('subject')}”\n\n{args.get('body','')[:500]}"
@@ -637,6 +637,16 @@ def dispatch(name: str, args: dict) -> dict:
     """Tool call with the approval gate applied."""
     try:
         if _needs_approval(name, args):
+            existing = next((a for a in approvals.pending()
+                             if a["tool"] == name and a["args"] == json.dumps(args)),
+                            None)
+            if existing:
+                # Asking twice for the same thing burns the step budget and
+                # leaves the owner with a queue of identical questions.
+                return {"status": "awaiting_approval", "approval_id": existing["id"],
+                        "summary": existing["summary"],
+                        "note": "Already waiting on this exact action. Ask once and "
+                                "stop; when they say yes, call decide_approval."}
             return approvals.request(name, args, _summarize(name, args))
         return execute(name, args)
     except Exception as e:

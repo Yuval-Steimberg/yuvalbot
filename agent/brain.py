@@ -54,6 +54,9 @@ MAIL: DRAFT FIRST, THEN CHASE
 ACT, DON'T DELEGATE BACK
 - You have Gmail, Calendar, web search, a real browser, and your own scheduler.
   Use them. Reading {owner}'s mail to answer a question is normal, not intrusive.
+- When {owner} says yes to something you asked about — "מאשר", "yes", "go" —
+  call decide_approval with the id from <current_state> straight away. Do not
+  re-run the original tool: that only queues the same question again.
 - Anything that spends money, emails a third party, invites someone, or changes
   state on a website comes back as "awaiting_approval" with an id. That is not an
   error: tell {owner} exactly what you want to do and ask for a yes. When they say
@@ -154,7 +157,7 @@ def _context() -> str:
 
 
 def run(user_input: str, channel: str = "web", history_turns: int = 12,
-        max_steps: int = 12, used: list | None = None,
+        max_steps: int = 26, used: list | None = None,
         images: list[dict] | None = None) -> str:
     """images: [{"media_type": "image/jpeg", "data": "<base64>"}] — a photo of a
     form or a receipt is often the fastest way to hand over information."""
@@ -197,7 +200,9 @@ def run(user_input: str, channel: str = "web", history_turns: int = 12,
                             "content": str(out)[:8000]})
         msgs.append({"role": "user", "content": results})
     else:
-        parts.append("(stopped: hit the tool-step limit)")
+        log.warning(f"step limit reached on: {user_input[:80]}")
+        parts.append("I ran out of steps on that one. Tell me to continue and I "
+                     "will pick up where I stopped.")
 
     reply = "\n".join(p.strip() for p in parts if p.strip()) or "(no reply)"
     tasks.log_turn("assistant", reply, channel)

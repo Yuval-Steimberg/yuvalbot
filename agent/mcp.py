@@ -271,21 +271,52 @@ def split(tool_name: str) -> tuple[str, str]:
 # would gate every read behind an approval, or worse, wave a write through.
 WRAPPERS = {"execute_tool", "composio_execute_tool", "execute", "call_tool",
             "run_tool", "composio_multi_execute_tool"}
+NESTED_KEYS = ("arguments", "input", "params", "parameters", "body", "payload",
+               "tool_input")
+# A multi-execute call carries a list of actions under a plural key; every one of
+# them has to be classified, and one write in the batch gates the whole call.
+BATCH_KEYS = ("tools", "actions", "calls", "items", "requests", "operations")
 INNER_KEYS = ("tool_slug", "tool_name", "toolSlug", "toolName", "slug", "action",
               "tool", "name")
 
 
-def _inner_tool(args: dict) -> str:
+def _is_wrapper(tool: str) -> bool:
+    """Composio has shipped several names for this; all of them say 'execute'."""
+    low = tool.lower()
+    return low in WRAPPERS or "execute" in low
+
+
+def _inner_tool(args: dict, depth: int = 0) -> str:
+    """Dig the real action out of a wrapper's arguments, whatever shape it takes."""
+    args = args or {}
     for k in INNER_KEYS:
-        v = (args or {}).get(k)
+        v = args.get(k)
         if isinstance(v, str) and v:
             return v
-        if isinstance(v, list) and v and isinstance(v[0], str):
-            return " ".join(v)                    # multi-execute takes a list
-        if isinstance(v, dict):
-            for kk in INNER_KEYS:
-                if isinstance(v.get(kk), str):
-                    return v[kk]
+        if isinstance(v, list) and v:
+            if isinstance(v[0], str):
+                return " ".join(x for x in v if isinstance(x, str))
+            if isinstance(v[0], dict) and depth < 3:
+                names = [_inner_tool(x, depth + 1) for x in v if isinstance(x, dict)]
+                if any(names):
+                    return " ".join(n for n in names if n)
+        if isinstance(v, dict) and depth < 3:
+            found = _inner_tool(v, depth + 1)
+            if found:
+                return found
+    for k in BATCH_KEYS:                           # {"tools": [{"tool_slug": ...}]}
+        v = args.get(k)
+        if isinstance(v, list) and v and depth < 3:
+            names = [_inner_tool(x, depth + 1) for x in v if isinstance(x, dict)]
+            names += [x for x in v if isinstance(x, str)]
+            if any(names):
+                return " ".join(n for n in names if n)
+    for k in NESTED_KEYS:                          # {"arguments": {"tool_slug": ...}}
+        v = args.get(k)
+        if isinstance(v, dict) and depth < 3:
+            found = _inner_tool(v, depth + 1)
+            if found:
+                return found
     return ""
 
 
@@ -306,7 +337,7 @@ def needs_approval(tool_name: str, args: dict | None = None) -> bool:
         return True
     if s.trust == "read_only":
         return False
-    if tool.lower() in WRAPPERS:
+    if _is_wrapper(tool):
         inner = _inner_tool(args or {})
         # An unnamed action through a wrapper is the one case to be strict about.
         return _classify(inner) if inner else True
