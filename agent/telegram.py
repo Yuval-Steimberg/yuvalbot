@@ -80,6 +80,35 @@ def webhook_info() -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def download(file_id: str) -> tuple[bytes, str]:
+    """Fetch a photo or document the owner sent. Returns (bytes, filename)."""
+    tok = token()
+    info = _api("getFile", file_id=file_id)
+    path = (info.get("result") or {}).get("file_path", "")
+    if not path:
+        raise RuntimeError(f"telegram would not give the file: {str(info)[:120]}")
+    r = requests.get(f"https://api.telegram.org/file/bot{tok}/{path}", timeout=60)
+    r.raise_for_status()
+    return r.content, path.split("/")[-1]
+
+
+def media(update: dict) -> dict:
+    """What the owner attached: a photo to look at, or a file to read."""
+    msg = update.get("message") or update.get("edited_message") or {}
+    if msg.get("photo"):
+        biggest = sorted(msg["photo"], key=lambda p: p.get("file_size", 0))[-1]
+        return {"kind": "photo", "file_id": biggest["file_id"],
+                "caption": msg.get("caption", "")}
+    doc = msg.get("document")
+    if doc:
+        return {"kind": "document", "file_id": doc["file_id"],
+                "filename": doc.get("file_name", "file"),
+                "mime": doc.get("mime_type", ""), "caption": msg.get("caption", "")}
+    if msg.get("voice") or msg.get("audio"):
+        return {"kind": "voice"}
+    return {}
+
+
 def parse(update: dict) -> tuple[str, str, str]:
     """(chat_id, text, sender_name) from an incoming update."""
     msg = update.get("message") or update.get("edited_message") or {}

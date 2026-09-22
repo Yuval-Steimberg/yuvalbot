@@ -30,8 +30,10 @@ KINDS = [
 ]
 INBOX = "_inbox"       # raw capture, digested by the consolidation pass
 
-_SLUG = re.compile(r"[^a-z0-9]+")
-_WORD = re.compile(r"[a-z0-9']+")
+# Unicode, not ASCII: this agent's owner writes in Hebrew, and an ASCII-only
+# tokenizer silently finds nothing rather than failing loudly.
+_SLUG = re.compile(r"[^\w]+", re.UNICODE)
+_WORD = re.compile(r"[\w']+", re.UNICODE)
 
 
 def now() -> str:
@@ -183,7 +185,8 @@ def all_records(kind: str | None = None):
 
 STOP = {"the", "a", "an", "of", "and", "or", "to", "in", "on", "for", "is",
         "are", "was", "my", "me", "i", "it", "that", "what", "do", "does",
-        "he", "she", "they", "his", "her", "their", "with", "about", "any"}
+        "he", "she", "they", "his", "her", "their", "with", "about", "any",
+        "של", "את", "עם", "אני", "מה", "זה", "הוא", "היא", "יש", "לי", "על"}
 
 
 def _terms(query: str):

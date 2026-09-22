@@ -687,6 +687,66 @@ def api_secrets():
         return jsonify({"error": str(e)}), 400
 
 
+@app.route("/api/ready")
+@login_required
+def api_ready():
+    """One call that says whether this agent is actually usable, and what is not."""
+    from datetime import datetime, timezone
+    caps = config.capabilities()
+    beats = tasks.beats()
+
+    def age(name):
+        ts = beats.get(name)
+        if not ts:
+            return None
+        return int((datetime.now(timezone.utc)
+                    - datetime.fromisoformat(ts.replace("Z", "+00:00"))).total_seconds())
+
+    checks = {}
+    ok, why = config.storage_ok()
+    checks["storage"] = {"ok": ok, "detail": why}
+    checks["model"] = {"ok": caps["llm"], "detail": config.MODEL if caps["llm"]
+                       else "ANTHROPIC_API_KEY missing or rejected"}
+    checks["memory"] = {"ok": memory.stats()["commits"] > 0,
+                        "detail": f"{sum(v for k, v in memory.stats().items() if k != 'commits')} "
+                                  f"records, {memory.stats()['commits']} commits"}
+    reachable = [k for k in ("telegram", "whatsapp", "email_out") if caps[k]]
+    checks["can_reach_you"] = {"ok": bool(reachable),
+                               "detail": ", ".join(reachable) or "no outbound channel"}
+    tick_age = age("followups")
+    checks["scheduler"] = {
+        "ok": tick_age is not None and tick_age < 600,
+        "detail": (f"last follow-up tick {tick_age}s ago" if tick_age is not None
+                   else "has never run — reminders will not fire")}
+    jobs_age = age("jobs")
+    checks["job_runner"] = {
+        "ok": jobs_age is not None and jobs_age < 600,
+        "detail": (f"last job slice {jobs_age}s ago" if jobs_age is not None
+                   else "has never run — background jobs will not progress")}
+    checks["mail"] = {"ok": caps["gmail"],
+                      "detail": "Gmail, Calendar, Drive, Contacts"
+                                if caps["gmail"] else
+                                "not connected — /connect"}
+    servers = mcp.status()
+    checks["apps"] = {"ok": True,
+                      "detail": ", ".join(f"{k} ({v['tools']} tools)"
+                                          for k, v in servers.items()) or "none linked"}
+    checks["approvals"] = {"ok": not config.AUTO_APPROVE,
+                           "detail": "gate on" if not config.AUTO_APPROVE
+                                     else "AUTO_APPROVE=1 — nothing will ask first"}
+
+    core = ["storage", "model", "can_reach_you", "scheduler", "job_runner"]
+    missing = [k for k in core if not checks[k]["ok"]]
+    return jsonify({
+        "ready": not missing,
+        "verdict": ("Ready." if not missing else
+                    "Not ready: " + "; ".join(f"{k} — {checks[k]['detail']}"
+                                              for k in missing)),
+        "optional_off": [k for k, v in checks.items()
+                         if k not in core and not v["ok"]],
+        "checks": checks})
+
+
 @app.route("/api/selftest")
 @login_required
 def api_selftest():
@@ -868,10 +928,10 @@ def webhook_whatsapp():
 _SEEN = deque(maxlen=500)
 
 
-def _answer_async(text: str, channel: str, deliver):
+def _answer_async(text: str, channel: str, deliver, images=None):
     def go():
         try:
-            reply = brain.run(text, channel=channel)
+            reply = brain.run(text, channel=channel, images=images)
         except Exception as e:
             # Say what actually broke. This is a single-user agent talking to its
             # owner, and "something went wrong" costs an hour of guessing.
@@ -906,6 +966,37 @@ def webhook_telegram():
     if allowed and chat_id != allowed:
         log.warning(f"ignored telegram message from chat {chat_id} ({who})")
         return jsonify({"ok": True})
+    att = telegram.media(update)
+    images = None
+    if att.get("kind") == "photo":
+        try:
+            import base64
+            raw, _ = telegram.download(att["file_id"])
+            images = [{"media_type": "image/jpeg",
+                       "data": base64.b64encode(raw).decode()}]
+            text = att.get("caption") or "I sent you a photo — read it and tell me " \
+                                         "what it says and what I should do."
+        except Exception as e:
+            log.error(f"photo download failed: {e}")
+            telegram.send(f"Could not fetch that photo: {e}", chat_id)
+            return jsonify({"ok": True})
+    elif att.get("kind") == "document":
+        try:
+            raw, name = telegram.download(att["file_id"])
+            config.FILES_DIR.mkdir(parents=True, exist_ok=True)
+            path = config.FILES_DIR / (att.get("filename") or name)
+            path.write_bytes(raw)
+            text = (f"{att.get('caption') or 'I sent you a file.'}\n\n"
+                    f"[saved as '{path.name}' — read it with read_document]")
+        except Exception as e:
+            log.error(f"document download failed: {e}")
+            telegram.send(f"Could not fetch that file: {e}", chat_id)
+            return jsonify({"ok": True})
+    elif att.get("kind") == "voice":
+        telegram.send("I cannot hear voice notes yet — send it as text and I will "
+                      "deal with it.", chat_id)
+        return jsonify({"ok": True})
+
     if not text:
         return jsonify({"ok": True})
     if text.startswith("/start"):
@@ -916,7 +1007,7 @@ def webhook_telegram():
             telegram.send("Linked. I will message you here — reminders, job progress, "
                           "and replies that land while you are away.", chat_id)
             return jsonify({"ok": True})
-    _answer_async(text, "telegram", lambda r: telegram.send(r, chat_id))
+    _answer_async(text, "telegram", lambda r: telegram.send(r, chat_id), images=images)
     return jsonify({"ok": True})
 
 
@@ -932,6 +1023,7 @@ def health():
 def jobs_tick():
     """Advance one slice of background work. Jobs are what let the agent keep
     working through thousands of items over hours."""
+    tasks.beat("jobs")
     try:
         jobs.tick()
     except Exception as e:
@@ -939,6 +1031,7 @@ def jobs_tick():
 
 
 def agent_tick():
+    tasks.beat("followups")
     try:
         done = brain.tick()
         if done:
@@ -948,6 +1041,7 @@ def agent_tick():
 
 
 def nightly_consolidation():
+    tasks.beat("consolidation")
     try:
         consolidate.run()
     except Exception as e:
@@ -955,6 +1049,7 @@ def nightly_consolidation():
 
 
 def morning_review():
+    tasks.beat("daily_review")
     try:
         brain.daily_briefing()
     except Exception as e:

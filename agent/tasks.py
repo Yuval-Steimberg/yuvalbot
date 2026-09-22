@@ -155,6 +155,20 @@ def log_turn(role: str, content: str, channel: str = "web"):
                     (now(), role, content[:20000], channel))
 
 
+def beat(name: str):
+    """Record that a scheduled loop ran. Without this, a dead scheduler looks
+    exactly like an idle one — which is how a reminder goes missing."""
+    from . import store
+    beats = store.get("heartbeats", {}) or {}
+    beats[name] = now()
+    store.put("heartbeats", beats)
+
+
+def beats() -> dict:
+    from . import store
+    return store.get("heartbeats", {}) or {}
+
+
 def recent_turns(limit: int = 20):
     with _con() as con:
         rows = [dict(r) for r in con.execute(

@@ -128,14 +128,24 @@ def _context() -> str:
 
 
 def run(user_input: str, channel: str = "web", history_turns: int = 12,
-        max_steps: int = 12, used: list | None = None) -> str:
+        max_steps: int = 12, used: list | None = None,
+        images: list[dict] | None = None) -> str:
+    """images: [{"media_type": "image/jpeg", "data": "<base64>"}] — a photo of a
+    form or a receipt is often the fastest way to hand over information."""
     msgs = []
     for t in tasks.recent_turns(history_turns):
         if t["content"].strip():
             msgs.append({"role": "assistant" if t["role"] == "assistant" else "user",
                          "content": t["content"][:4000]})
-    msgs.append({"role": "user", "content": user_input})
-    tasks.log_turn("user", user_input, channel)
+    if images:
+        blocks = [{"type": "image",
+                   "source": {"type": "base64", "media_type": i["media_type"],
+                              "data": i["data"]}} for i in images[:4]]
+        blocks.append({"type": "text", "text": user_input})
+        msgs.append({"role": "user", "content": blocks})
+    else:
+        msgs.append({"role": "user", "content": user_input})
+    tasks.log_turn("user", user_input + (" [photo]" if images else ""), channel)
 
     tool_defs = tools.all_schemas()
     system = (SYSTEM.format(owner=config.OWNER_NAME) +
