@@ -44,6 +44,29 @@ def _api(method: str, **payload):
         return {"ok": False, "error": str(e)}
 
 
+RLM = "\u200f"          # right-to-left mark
+_HEBREW = re.compile(r"[\u0590-\u05FF\u0600-\u06FF]")
+
+
+def fix_direction(text: str) -> str:
+    """Force each Hebrew line to lay out right-to-left.
+
+    A line that opens with a digit, a bullet or a Latin word takes its base
+    direction from that character, so "1. סקירה מלאה" and "054-7722420" come out
+    reversed or with the number stranded on the wrong side. One invisible mark at
+    the start of the line settles it.
+    """
+    out = []
+    for line in (text or "").split("\n"):
+        stripped = line.lstrip()
+        if stripped and _HEBREW.search(line) and not stripped.startswith(RLM):
+            pad = line[:len(line) - len(stripped)]
+            out.append(f"{pad}{RLM}{stripped}")
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
 def to_html(text: str) -> str:
     """Markdown the model writes -> the small HTML subset Telegram renders.
 
@@ -77,12 +100,13 @@ def send(text: str, chat: str | None = None) -> dict:
     chunks = [text[i:i + 3500] for i in range(0, len(text) or 1, 3500)] or [""]
     out = {}
     for c in chunks:
-        out = _api("sendMessage", chat_id=target, text=to_html(c),
+        out = _api("sendMessage", chat_id=target, text=fix_direction(to_html(c)),
                    parse_mode="HTML", disable_web_page_preview=True)
         if not out.get("ok"):
             # Bad markup must never cost the message: resend it as plain text.
             log.warning(f"HTML send rejected, falling back: {str(out)[:160]}")
-            out = _api("sendMessage", chat_id=target, text=strip_markdown(c),
+            out = _api("sendMessage", chat_id=target,
+                       text=fix_direction(strip_markdown(c)),
                        disable_web_page_preview=True)
     return {"ok": bool(out.get("ok")), "chunks": len(chunks)}
 

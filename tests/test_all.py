@@ -414,6 +414,17 @@ check("bold and bullets convert", "<b>כותרת</b>" in html and "• item" in 
 check("plain fallback strips everything", "*" not in strip_markdown(messy)
       and "#" not in strip_markdown(messy))
 
+from agent.telegram import fix_direction, RLM
+rtl = fix_direction("1. סקירה מלאה של העמלות\n054-7722420\nPlain english line")
+lines = rtl.split("\n")
+check("a Hebrew line opening with a digit is marked right-to-left",
+      lines[0].startswith(RLM), repr(lines[0]))
+check("a bare phone number is left alone", lines[1] == "054-7722420", repr(lines[1]))
+check("an English line is untouched", lines[2] == "Plain english line")
+check("the mark is never doubled", fix_direction(rtl) == rtl)
+check("html tags survive the mark",
+      "<b>" in fix_direction("<b>שלום</b>"))
+
 print("\nsecrets never go through chat")
 os.environ["VAULT_KEY"] = "test-vault-key"
 os.environ["VAULT_PATH"] = f"{TMP}/v.enc"
@@ -599,6 +610,8 @@ check("the prompt forbids asking for what is in the inbox",
       "statement about your memory, not about the world" in brain.SYSTEM)
 check("and says a request to somebody is an email, not a login",
       "not a login" in brain.SYSTEM)
+check("and refuses to assert what it cannot point to",
+      "nothing you cannot point to" in brain.SYSTEM)
 
 print("\nself check")
 from agent import diagnose                                             # noqa: E402

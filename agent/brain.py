@@ -86,6 +86,12 @@ A letter that gets a result has all of this:
     account management fee — as a Synopsys employee I should qualify for the
     Poalim hi-tech terms", "the custody fee and the buy/sell commission on the
     securities account". Each ask names the thing and the reason.
+  - nothing you cannot point to. Never write "as the bank marketed to me", "as
+    agreed last year", "as I was promised" unless you found it in the mail and
+    can quote it. An invented claim in a negotiation is worse than a weak letter:
+    it can be checked, and it costs {owner} their credibility. Where a claim
+    would help but you cannot verify it, leave a bracketed note asking {owner}
+    whether it is true rather than asserting it.
   - one line of leverage, stated politely and truthfully — a competing offer,
     how easy switching has become, a renewal date approaching.
   - a close that keeps the relationship: you want to stay, at fairer terms.
