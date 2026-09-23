@@ -612,6 +612,10 @@ check("and says a request to somebody is an email, not a login",
       "not a login" in brain.SYSTEM)
 check("and refuses to assert what it cannot point to",
       "nothing you cannot point to" in brain.SYSTEM)
+check("and never coins a Hebrew word for a product",
+      "Never coin a Hebrew word" in brain.SYSTEM)
+check("a missing integration still leaves the browser",
+      "A missing integration is not a missing route" in brain.SYSTEM)
 
 print("\nself check")
 from agent import diagnose                                             # noqa: E402
