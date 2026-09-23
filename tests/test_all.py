@@ -79,6 +79,31 @@ check("asking for the same approval twice reuses the first",
       gated_twice_a["approval_id"] == gated_twice_b["approval_id"])
 approvals.decide(gated_twice_a["approval_id"], False)
 
+later = tools.dispatch("gmail_send", {"to": "shira@example.com", "subject": "s",
+                                      "body": "b", "send_at": "in 5 minutes"})
+check("a later send still asks once", later.get("status") == "awaiting_approval")
+check("and the approval carries the clock time", later.get("run_at"))
+check("and says when it goes out", "goes out at" in later["summary"])
+sends = []
+google.send = lambda *a, **k: (sends.append(a) or {"sent": True})
+ok = approvals.decide(later["approval_id"], True)
+check("approving a later send schedules it instead of sending",
+      ok["status"] == "scheduled" and not sends)
+check("it shows up as waiting on the clock",
+      any(r["id"] == later["approval_id"] for r in approvals.scheduled()))
+check("nothing goes out before its time", approvals.run_due() == [])
+with approvals._con() as _c2:            # wind the clock back, not the test's patience
+    _c2.execute("UPDATE approvals SET run_at='2000-01-01T00:00:00Z' WHERE id=?",
+                (later["approval_id"],))
+ran = approvals.run_due()
+check("and it sends itself when the time comes, without a second yes",
+      len(ran) == 1 and sends)
+check("a send_at the model cannot parse is refused, not stored",
+      "error" in tools.dispatch("gmail_send", {"to": "a@b.com", "subject": "s",
+                                               "body": "b", "send_at": "later"}))
+check("only sending tools can be scheduled",
+      "error" in tools.dispatch("gmail_search", {"query": "x", "send_at": "in 5 minutes"}))
+
 print("\njobs")
 state = {"promotions": 2500, "tripped": False}
 def list_ids(q, page="", size=500):
@@ -616,6 +641,8 @@ check("and never coins a Hebrew word for a product",
       "Never coin a Hebrew word" in brain.SYSTEM)
 check("a missing integration still leaves the browser",
       "A missing integration is not a missing route" in brain.SYSTEM)
+check("and the prompt knows how to send later",
+      "send_at" in brain.SYSTEM)
 
 print("\nself check")
 from agent import diagnose                                             # noqa: E402

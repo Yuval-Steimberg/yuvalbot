@@ -79,14 +79,18 @@ SCHEMAS = [
          "query": {"type": "string"}, "limit": {"type": "integer", "default": 8}},
          "required": ["query"]}},
     {"name": "gmail_send",
-     "description": "Send email AS the owner to a third party. Needs approval.",
+     "description": "Send email AS the owner to a third party. Needs approval. "
+                    "Pass send_at to have it go out later on one yes.",
      "input_schema": {"type": "object", "properties": {
-         "to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}},
+         "to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"},
+         "send_at": {"type": "string", "description": "optional: hold the send until this time — 'in 5 minutes', 'in 2 hours', or an ISO UTC timestamp. One approval covers it; the send happens on the clock, unasked."}},
          "required": ["to", "subject", "body"]}},
     {"name": "gmail_reply",
-     "description": "Reply in thread to a Gmail message id. Needs approval.",
+     "description": "Reply in thread to a Gmail message id. Needs approval. "
+                    "Pass send_at to have it go out later on one yes.",
      "input_schema": {"type": "object", "properties": {
-         "message_id": {"type": "string"}, "body": {"type": "string"}},
+         "message_id": {"type": "string"}, "body": {"type": "string"},
+         "send_at": {"type": "string", "description": "optional: hold the send until this time — 'in 5 minutes', 'in 2 hours', or an ISO UTC timestamp. One approval covers it; the send happens on the clock, unasked."}},
          "required": ["message_id", "body"]}},
     {"name": "gmail_thread",
      "description": "Read an entire mail thread — every message, dates, and what "
@@ -110,9 +114,11 @@ SCHEMAS = [
          "message_id": {"type": "string"}, "body": {"type": "string"}},
          "required": ["message_id", "body"]}},
     {"name": "gmail_send_draft",
-     "description": "Send a draft the owner has approved. Needs approval.",
+     "description": "Send a draft the owner has approved. Needs approval. "
+                    "Pass send_at to have it go out later on one yes.",
      "input_schema": {"type": "object", "properties": {
-         "draft_id": {"type": "string"}}, "required": ["draft_id"]}},
+         "draft_id": {"type": "string"},
+         "send_at": {"type": "string", "description": "optional: hold the send until this time — 'in 5 minutes', 'in 2 hours', or an ISO UTC timestamp. One approval covers it; the send happens on the clock, unasked."}}, "required": ["draft_id"]}},
     {"name": "gmail_drafts", "description": "List saved drafts with their links.",
      "input_schema": {"type": "object", "properties": {
          "limit": {"type": "integer", "default": 10}}}},
@@ -744,9 +750,22 @@ def execute(name: str, args: dict) -> dict:
     return {"error": f"unknown tool {name}"}
 
 
+SCHEDULABLE = {"gmail_send", "gmail_reply", "gmail_send_draft"}
+
+
 def dispatch(name: str, args: dict) -> dict:
     """Tool call with the approval gate applied."""
     try:
+        args = dict(args or {})
+        send_at = args.pop("send_at", None)
+        run_at = None
+        if send_at:
+            if name not in SCHEDULABLE:
+                return {"error": f"{name} cannot be scheduled. Use schedule_followup."}
+            try:
+                run_at = tasks._parse_due(send_at)
+            except tasks.BadDueDate as e:
+                return {"error": str(e)}
         if _needs_approval(name, args):
             existing = next((a for a in approvals.pending()
                              if a["tool"] == name and a["args"] == json.dumps(args)),
@@ -758,7 +777,10 @@ def dispatch(name: str, args: dict) -> dict:
                         "summary": existing["summary"],
                         "note": "Already waiting on this exact action. Ask once and "
                                 "stop; when they say yes, call decide_approval."}
-            return approvals.request(name, args, _summarize(name, args))
+            summary = _summarize(name, args)
+            if run_at:
+                summary = f"{summary}\n\n(goes out at {run_at})"
+            return approvals.request(name, args, summary, run_at)
         return execute(name, args)
     except Exception as e:
         log.error(f"tool {name} failed: {e}")

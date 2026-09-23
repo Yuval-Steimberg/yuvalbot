@@ -12,7 +12,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 import agent
 from agent import (brain, consolidate, memory, tasks, approvals, config, vault,
-                   telegram, mcp, jobs, tools, oauth, store, composio, livebrowser)
+                   telegram, mcp, jobs, tools, oauth, store, composio, livebrowser,
+                   channels)
 from agent.channels import verify_twilio
 
 logging.basicConfig(level=logging.INFO,
@@ -1559,6 +1560,16 @@ def jobs_tick():
 
 def agent_tick():
     tasks.beat("followups")
+    try:
+        sent = approvals.run_due()
+        for a in sent:
+            err = isinstance(a["result"], dict) and a["result"].get("error")
+            channels.send(f"Sent as scheduled: {a['summary'].splitlines()[0]}"
+                          if not err else
+                          f"The scheduled send failed: {a['summary'].splitlines()[0]}"
+                          f"\n{err}")
+    except Exception as e:
+        log.error(f"scheduled send error: {e}")
     try:
         done = brain.tick()
         if done:
