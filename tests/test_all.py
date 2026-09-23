@@ -643,6 +643,13 @@ check("a missing integration still leaves the browser",
       "A missing integration is not a missing route" in brain.SYSTEM)
 check("and the prompt knows how to send later",
       "send_at" in brain.SYSTEM)
+check("a blocked channel still has to deliver something",
+      "never a reason to deliver nothing" in brain.SYSTEM)
+check("and a message to a person is not a greeting template",
+      "greeting template" in brain.SYSTEM)
+check("a follow-up can carry text to hand over verbatim",
+      "verbatim" in next(t["description"] for t in tools.SCHEMAS
+                         if t["name"] == "schedule_followup"))
 
 print("\nself check")
 from agent import diagnose                                             # noqa: E402

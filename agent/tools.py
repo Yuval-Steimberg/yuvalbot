@@ -48,7 +48,10 @@ SCHEMAS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "schedule_followup",
      "description": "Book your own future turn. 'what' is the instruction you will "
-                    "receive then — write it so it stands alone. Every open loop gets one.",
+                    "receive then — write it so it stands alone. Every open loop gets one. "
+                    "When something has to reach the owner word for word at that time — a "
+                    "message you drafted for them to paste and send themselves — put the "
+                    "full text inside 'what' and say to deliver it verbatim.",
      "input_schema": {"type": "object", "properties": {
          "when": {"type": "string", "description": "ISO8601 UTC or 'in 2h' / 'in 3d'"},
          "what": {"type": "string"},
