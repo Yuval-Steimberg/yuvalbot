@@ -254,6 +254,13 @@ def _context() -> str:
         lines.append(f"Connected accounts (permanent, through Composio): "
                      f"{', '.join(apps)}. Their tools reach you through the router "
                      f"below — never ask {config.OWNER_NAME} to connect these again.")
+        if not config.google_ready():
+            lines.append(
+                "Google runs through Composio here, not the built-in client, so the "
+                "gmail_/calendar_/drive_ tools are not loaded. This is not a broken "
+                "connection and not something to fix: use the router tools. A "
+                "Composio error is an error to report, never a reason to send a "
+                "connect link for an app in the list above.")
     connected = {k: v for k, v in mcp.status().items() if v["tools"]}
     if connected:
         lines.append("Connected apps (MCP): " +

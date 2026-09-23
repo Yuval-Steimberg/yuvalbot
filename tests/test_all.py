@@ -104,6 +104,28 @@ check("a send_at the model cannot parse is refused, not stored",
 check("only sending tools can be scheduled",
       "error" in tools.dispatch("gmail_search", {"query": "x", "send_at": "in 5 minutes"}))
 
+print("\ntwo roads to Google")
+_greal, _vreal = config.google_ready, config.via_composio
+config.google_ready = lambda: False
+config.via_composio = lambda app: app in ("gmail", "googledrive")
+names = {t["name"] for t in tools.all_schemas()}
+check("a Gmail tool that cannot work is not offered", "gmail_search" not in names)
+check("nor a Drive one", "drive_find" not in names)
+check("a tool on a road that is still open stays", "memory_search" in names)
+out = tools.dispatch("gmail_search", {"query": "x"})
+check("calling it anyway names the road that works",
+      out.get("route") == "composio" and "already connected" in out["error"])
+config.via_composio = lambda app: False
+check("with nothing connected the built-in tools come back",
+      "gmail_search" in {t["name"] for t in tools.all_schemas()})
+check("and then it is an honest failure, not a redirect",
+      "route" not in tools.dispatch("gmail_labels", {}))
+config.google_ready = lambda: True
+config.via_composio = lambda app: True
+check("real credentials keep the built-in tools",
+      "gmail_search" in {t["name"] for t in tools.all_schemas()})
+config.google_ready, config.via_composio = _greal, _vreal
+
 print("\njobs")
 state = {"promotions": 2500, "tripped": False}
 def list_ids(q, page="", size=500):

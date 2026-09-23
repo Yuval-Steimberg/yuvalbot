@@ -410,6 +410,33 @@ if os.environ.get("ENABLE_SHELL") == "1":
 _LAST_REFRESH = [0.0]
 
 
+# ─── which native tools speak to Google, and therefore need Google ────────────
+# Gmail reaches the agent by two different roads: the built-in REST client, which
+# needs GOOGLE_REFRESH_TOKEN, and Composio's router, which needs nothing but a
+# button press. Connecting the second one leaves the first one broken, and the
+# agent used to keep calling it, keep failing, and keep sending connect links for
+# an app that was already connected. A tool that cannot work is not offered.
+
+def google_app_of(name: str) -> str | None:
+    if name.startswith("gmail_") or name in ("watch_thread", "find_contact"):
+        return "gmail"
+    if name.startswith("calendar_"):
+        return "googlecalendar"
+    if name.startswith("drive_"):
+        return "googledrive"
+    if name == "contacts_search":
+        return "googlecontacts"
+    return None
+
+
+def _composio_only(name: str) -> str | None:
+    """The app this tool needs, when only the Composio road to it is open."""
+    app = google_app_of(name)
+    if app and not config.google_ready() and config.via_composio(app):
+        return app
+    return None
+
+
 def all_schemas() -> list[dict]:
     """Native tools plus whatever the configured MCP servers expose right now.
 
@@ -426,7 +453,8 @@ def all_schemas() -> list[dict]:
             if composio.configured():
                 log.info("composio session stale, recreating")
                 composio.wire()
-        return SCHEMAS + mcp.schemas()
+        native = [t for t in SCHEMAS if not _composio_only(t["name"])]
+        return native + mcp.schemas()
     except Exception as e:
         log.error(f"mcp schema load failed: {e}")
         return SCHEMAS
@@ -760,6 +788,14 @@ def dispatch(name: str, args: dict) -> dict:
     """Tool call with the approval gate applied."""
     try:
         args = dict(args or {})
+        app = _composio_only(name)
+        if app:
+            return {"error": f"The built-in Google client has no credentials, but "
+                             f"{app} is connected through Composio. Do this through "
+                             f"the Composio tools — search_tools for the action you "
+                             f"need, then run it. Do not send a connect link: the "
+                             f"app is already connected.",
+                    "route": "composio", "app": app}
         send_at = args.pop("send_at", None)
         run_at = None
         if send_at:
